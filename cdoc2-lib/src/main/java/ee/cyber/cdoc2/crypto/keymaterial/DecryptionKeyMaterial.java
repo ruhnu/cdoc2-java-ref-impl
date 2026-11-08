@@ -8,6 +8,7 @@ import ee.cyber.cdoc2.crypto.keymaterial.decrypt.KeyPairDecryptionKeyMaterial;
 import ee.cyber.cdoc2.crypto.keymaterial.decrypt.KeyShareDecryptionKeyMaterial;
 import ee.cyber.cdoc2.crypto.keymaterial.decrypt.PasswordDecryptionKeyMaterial;
 import ee.cyber.cdoc2.crypto.keymaterial.decrypt.SecretDecryptionKeyMaterial;
+import ee.cyber.cdoc2.crypto.keymaterial.decrypt.SshPkDecryptionKeyMaterial;
 import ee.cyber.cdoc2.crypto.AuthenticationIdentifier;
 
 
@@ -60,6 +61,16 @@ public interface DecryptionKeyMaterial {
         String alias
     ) {
         return new KeyPairDecryptionKeyMaterial(recipientKeyPair, slot, alias);
+    }
+
+    /**
+     * Create key material for decrypting an SSH public key recipient with the matching key in ssh-agent.
+     * @param recipientId "ruhnu/pk/&lt;base64 OpenSSH public key blob&gt;" recipient identifier
+     * @return DecryptionKeyMaterial key material required for decryption
+     * @throws ee.cyber.cdoc2.auth.exception.InvalidSshPublicKeyException if key is malformed or not supported
+     */
+    static DecryptionKeyMaterial fromSshAgentKey(String recipientId) {
+        return new SshPkDecryptionKeyMaterial(recipientId);
     }
 
     static DecryptionKeyMaterial fromAuthMeans(

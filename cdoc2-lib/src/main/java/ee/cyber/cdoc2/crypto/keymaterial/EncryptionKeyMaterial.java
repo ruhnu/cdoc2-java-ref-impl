@@ -1,5 +1,6 @@
 package ee.cyber.cdoc2.crypto.keymaterial;
 
+import ee.cyber.cdoc2.auth.SshPublicKeyParser;
 import ee.cyber.cdoc2.crypto.EncryptionKeyOrigin;
 import ee.cyber.cdoc2.crypto.KeyLabelParams;
 import ee.cyber.cdoc2.crypto.KeyLabelTools;
@@ -9,10 +10,17 @@ import ee.cyber.cdoc2.crypto.keymaterial.encrypt.KeyShareEncryptionKeyMaterial;
 import ee.cyber.cdoc2.crypto.keymaterial.encrypt.PasswordEncryptionKeyMaterial;
 import ee.cyber.cdoc2.crypto.keymaterial.encrypt.PublicKeyEncryptionKeyMaterial;
 import ee.cyber.cdoc2.crypto.keymaterial.encrypt.SecretEncryptionKeyMaterial;
+import ee.cyber.cdoc2.crypto.keymaterial.encrypt.SshPkEncryptionKeyMaterial;
 
+import javax.annotation.Nullable;
 import javax.crypto.SecretKey;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.PublicKey;
+import java.time.Duration;
 import java.util.Objects;
 
 import static ee.cyber.cdoc2.config.ConfigurationProperties.isKeyLabelMachineReadableFormatEnabled;
@@ -156,6 +164,40 @@ public interface EncryptionKeyMaterial {
         KeyLabelParams keyLabelParams
     ) {
         return new KeyShareEncryptionKeyMaterial(authIdentifier, formatKeyLabel(keyLabelParams));
+    }
+
+    /**
+     * Create {@link SshPkEncryptionKeyMaterial} for encrypting to an SSH public key through key shares.
+     * Only ECDSA P-256 (ecdsa-sha2-nistp256) keys are supported. The key comment is ignored.
+     * @param openSshPublicKeyLine OpenSSH public key line, as in a .pub file or `ssh-add -L` output
+     * @param shareLifetime requested key share lifetime, {@code null} for shares server default
+     * @return EncryptionKeyMaterial object
+     * @throws ee.cyber.cdoc2.auth.exception.InvalidSshPublicKeyException if the key can't be parsed or
+     *         its type is not supported
+     */
+    static EncryptionKeyMaterial fromSshPublicKey(
+        String openSshPublicKeyLine,
+        @Nullable Duration shareLifetime
+    ) {
+        String recipientId = SshPublicKeyParser.recipientIdFromOpenSshLine(openSshPublicKeyLine);
+        KeyLabelParams keyLabelParams = KeyLabelTools.createKeySharesKeyLabelParams(
+            "ruhnu/pk:" + SshPublicKeyParser.fingerprintFromRecipientId(recipientId));
+        return new SshPkEncryptionKeyMaterial(recipientId, formatKeyLabel(keyLabelParams), shareLifetime);
+    }
+
+    /**
+     * Create {@link SshPkEncryptionKeyMaterial} from OpenSSH public key file (.pub)
+     * @param publicKeyFile OpenSSH public key file
+     * @param shareLifetime requested key share lifetime, {@code null} for shares server default
+     * @return EncryptionKeyMaterial object
+     * @throws IOException if reading the file fails
+     * @see #fromSshPublicKey(String, Duration)
+     */
+    static EncryptionKeyMaterial fromSshPublicKeyFile(
+        Path publicKeyFile,
+        @Nullable Duration shareLifetime
+    ) throws IOException {
+        return fromSshPublicKey(Files.readString(publicKeyFile, StandardCharsets.US_ASCII), shareLifetime);
     }
 
     static EncryptionKeyMaterialCollectionBuilder collectionBuilder() {
