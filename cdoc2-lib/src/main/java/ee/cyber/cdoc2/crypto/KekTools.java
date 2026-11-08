@@ -391,14 +391,19 @@ public final class KekTools {
 
         List<KeyShareUri> shares = keySharesRecipient.getKeyShares();
         List<ShareAccessData> accessData = new ArrayList<>(shares.size());
-        try {
-            for (KeyShareUri share : shares) {
-                KeySharesClient client = keySharesClientFactory.getClientForServerUrl(share.serverBaseUrl());
+        for (KeyShareUri share : shares) {
+            KeySharesClient client = keySharesClientFactory.getClientForServerUrl(share.serverBaseUrl());
+            try {
                 String nonce = client.createKeyShareNonce(share.shareId(), null, null).getNonce();
                 accessData.add(new ShareAccessData(share.serverBaseUrl(), share.shareId(), nonce));
+            } catch (ApiException e) {
+                String reason = (e.getCode() == 404)
+                    ? "share not found (expired or deleted)"
+                    : "HTTP " + e.getCode();
+                throw new GeneralSecurityException(String.format(
+                    "Shares server %s refused nonce for share ID %s: %s",
+                    share.serverBaseUrl(), share.shareId(), reason), e);
             }
-        } catch (ApiException e) {
-            throw new GeneralSecurityException("Failed to get nonce for key share: " + e.getMessage(), e);
         }
 
         AuthTokenCreator tokenCreator = AuthTokenCreator.builder()

@@ -235,7 +235,7 @@ recipient whose key the agent holds:
 ```
 java -jar target/cdoc2-cli-*.jar decrypt \
   -Dkey-shares.properties=config/localhost/key-shares.properties \
-  --ssh-agent -f /tmp/ssh.cdoc2 -o /tmp/out
+  --ssh-agent -f /tmp/ssh.cdoc2 -o /tmp
 ```
 
 `--ssh-agent=/path/to/agent.sock` uses another agent socket instead of `$SSH_AUTH_SOCK`.
