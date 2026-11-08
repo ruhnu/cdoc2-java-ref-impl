@@ -15,6 +15,7 @@ import ee.cyber.cdoc2.CryptoStickConf;
 import ee.cyber.cdoc2.cli.DecryptionKeyExclusiveArgument;
 import ee.cyber.cdoc2.crypto.jwt.InteractionParams;
 import ee.cyber.cdoc2.crypto.keymaterial.DecryptionKeyMaterial;
+import ee.cyber.cdoc2.crypto.sshagent.SshAgentException;
 import ee.cyber.cdoc2.services.Cdoc2Services;
 
 import static ee.cyber.cdoc2.cli.util.CDocCommonHelper.assignClientConfValuesToSystemProps;
@@ -26,7 +27,7 @@ import static ee.cyber.cdoc2.config.ConfigurationProperties.KEY_CAPSULE_PROPERTI
 //CLI needs to interact with standard outputs
 @SuppressWarnings({"java:S106", "java:S125"})
 @Command(name = "decrypt", aliases = {"x", "extract"}, showAtFileInUsageHelp = true)
-public class CDocDecryptCmd implements Callable<Void> {
+public class CDocDecryptCmd implements Callable<Integer> {
     // commented out until public key server is in live
     //private static final String DEFAULT_SERVER_PROPERTIES = "classpath:localhost_pkcs11.properties";
 
@@ -89,7 +90,31 @@ public class CDocDecryptCmd implements Callable<Void> {
     private boolean truncateDisplayText = false;
 
     @Override
-    public Void call() throws Exception {
+    public Integer call() throws Exception {
+        try {
+            decrypt();
+            return 0;
+        } catch (Exception e) {
+            SshAgentException agentException = findCause(e, SshAgentException.class);
+            if (agentException == null) {
+                throw e;
+            }
+            // readable error instead of a stack trace: no agent, key not in agent, agent refused
+            System.err.println("ERROR: " + agentException.getMessage());
+            return 1;
+        }
+    }
+
+    private static <T extends Throwable> T findCause(Throwable t, Class<T> type) {
+        for (Throwable c = t; c != null; c = c.getCause()) {
+            if (type.isInstance(c)) {
+                return type.cast(c);
+            }
+        }
+        return null;
+    }
+
+    private void decrypt() throws Exception {
         if (!this.cdocFile.exists()) {
             throw new InvalidPathException(this.cdocFile.getAbsolutePath(), "Input CDOC file does not exist");
         }
@@ -114,7 +139,6 @@ public class CDocDecryptCmd implements Callable<Void> {
         System.out.println("Decrypting " + this.cdocFile + " to " + this.outputPath.getAbsolutePath());
         List<String> extractedFileNames = cDocDecrypter.decrypt();
         extractedFileNames.forEach(System.out::println);
-        return null;
     }
 
 }

@@ -358,7 +358,8 @@ public final class KekTools {
      * @param keySharesRecipient     recipient with "ruhnu/pk/" recipient id
      * @param keyMaterial            identifies the agent key
      * @param keySharesClientFactory key shares clients
-     * @param services               may contain {@link SshAgentClient}, otherwise $SSH_AUTH_SOCK is used
+     * @param services               may contain {@link SshAgentClient}; used when key material has no agent,
+     *                               otherwise $SSH_AUTH_SOCK is used
      * @return KEK
      * @throws SshAgentException if ssh-agent is not available, does not hold the key or refuses to sign
      */
@@ -374,9 +375,14 @@ public final class KekTools {
             throw new CDocException("Key material does not match recipient " + recipientId);
         }
 
-        SshAgentClient agent = (services != null && services.hasService(SshAgentClient.class))
-            ? services.get(SshAgentClient.class)
-            : SshAgentClient.fromEnvironment();
+        SshAgentClient agent;
+        if (keyMaterial.getAgent() != null) {
+            agent = keyMaterial.getAgent();
+        } else if (services != null && services.hasService(SshAgentClient.class)) {
+            agent = services.get(SshAgentClient.class);
+        } else {
+            agent = SshAgentClient.fromEnvironment();
+        }
         byte[] keyBlob = keyMaterial.getKeyBlob();
         if (!agent.hasKey(keyBlob)) {
             throw new SshAgentException(SshAgentException.Reason.KEY_NOT_FOUND,

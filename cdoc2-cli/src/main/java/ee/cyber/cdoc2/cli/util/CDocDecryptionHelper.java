@@ -3,8 +3,10 @@ package ee.cyber.cdoc2.cli.util;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.GeneralSecurityException;
 import java.security.KeyPair;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
@@ -19,8 +21,15 @@ import ee.cyber.cdoc2.CryptoStickConf;
 import ee.cyber.cdoc2.cli.DecryptionKeyExclusiveArgument;
 import ee.cyber.cdoc2.container.CDocParseException;
 import ee.cyber.cdoc2.container.Envelope;
+import ee.cyber.cdoc2.auth.SshPublicKeyParser;
+import ee.cyber.cdoc2.auth.exception.InvalidSshPublicKeyException;
+import ee.cyber.cdoc2.container.recipients.KeySharesRecipient;
 import ee.cyber.cdoc2.container.recipients.PBKDF2Recipient;
 import ee.cyber.cdoc2.container.recipients.Recipient;
+import ee.cyber.cdoc2.crypto.keymaterial.decrypt.SshPkDecryptionKeyMaterial;
+import ee.cyber.cdoc2.crypto.sshagent.SshAgentClient;
+import ee.cyber.cdoc2.crypto.sshagent.SshAgentException;
+import ee.cyber.cdoc2.fbs.recipients.KeyShareRecipientType;
 import ee.cyber.cdoc2.crypto.AuthenticationIdentifier;
 import ee.cyber.cdoc2.crypto.PemTools;
 import ee.cyber.cdoc2.crypto.Pkcs11Tools;
@@ -101,7 +110,7 @@ public final class CDocDecryptionHelper {
         InteractionParams.InteractionLanguage interactionLanguage,
         String displayText,
         boolean truncateDisplayText
-    ) throws GeneralSecurityException, IOException, CDocParseException {
+    ) throws GeneralSecurityException, IOException, CDocParseException, SshAgentException {
         Objects.requireNonNull(cdocFile);
         LabeledPasswordParam labeledPasswordParam = decryptArguments.getLabeledPasswordParam();
         LabeledSecret secret = decryptArguments.getSecret();
@@ -111,6 +120,10 @@ public final class CDocDecryptionHelper {
         boolean isWithMid = decryptArguments.isWithMid();
 
         countParams(labeledPasswordParam, secret, p12, privKeyFile, isWithSid, isWithMid);
+
+        if (decryptArguments.isWithSshAgent()) {
+            return getSshAgentDecryptionKeyMaterial(cdocFile, decryptArguments.getSshAgentSocket());
+        }
 
         DecryptionKeyMaterial decryptionKm = null;
         if (secret != null) {
@@ -147,6 +160,51 @@ public final class CDocDecryptionHelper {
         }
 
         return decryptionKm;
+    }
+
+    /**
+     * Find the SSH public key recipient of the container whose key ssh-agent holds. Nothing is sent to shares
+     * servers if there is none.
+     * @param cdocFile container
+     * @param socket ssh-agent socket path, empty for $SSH_AUTH_SOCK
+     */
+    private static DecryptionKeyMaterial getSshAgentDecryptionKeyMaterial(File cdocFile, String socket)
+        throws IOException, GeneralSecurityException, CDocParseException, SshAgentException {
+
+        List<String> sshRecipients = new ArrayList<>();
+        for (Recipient recipient : Envelope.parseHeader(Files.newInputStream(cdocFile.toPath()))) {
+            if (recipient instanceof KeySharesRecipient ksr
+                && ksr.getRecipientType() == KeyShareRecipientType.RUHNU
+                && ksr.getRecipientId().toString().startsWith(SshPublicKeyParser.RECIPIENT_ID_PREFIX)) {
+                sshRecipients.add(ksr.getRecipientId().toString());
+            }
+        }
+        if (sshRecipients.isEmpty()) {
+            throw new SshAgentException(SshAgentException.Reason.KEY_NOT_FOUND,
+                cdocFile + " has no SSH public key recipient");
+        }
+
+        SshAgentClient agent = socket.isEmpty()
+            ? SshAgentClient.fromEnvironment()
+            : new SshAgentClient(Path.of(socket));
+
+        for (SshAgentClient.Identity identity : agent.listIdentities()) {
+            String recipientId;
+            try {
+                recipientId = SshPublicKeyParser.recipientIdFromBlob(identity.keyBlob());
+            } catch (InvalidSshPublicKeyException e) {
+                continue; // agent key type not supported (ed25519, rsa, ...)
+            }
+            if (sshRecipients.contains(recipientId)) {
+                log.info("Using ssh-agent key {} ({})", identity.comment(),
+                    SshPublicKeyParser.fingerprintFromRecipientId(recipientId));
+                return new SshPkDecryptionKeyMaterial(recipientId, agent);
+            }
+        }
+
+        throw new SshAgentException(SshAgentException.Reason.KEY_NOT_FOUND,
+            "No matching key found in ssh-agent. " + cdocFile + " can be decrypted with: "
+                + sshRecipients.stream().map(SshPublicKeyParser::fingerprintFromRecipientId).toList());
     }
 
     private static DecryptionKeyMaterial getSidDecryptionKeyMaterial(

@@ -44,6 +44,12 @@ public class DecryptionKeyExclusiveArgument {
     @CommandLine.ArgGroup(exclusive = false)
     private MobileIdArguments midArguments;
 
+    @CommandLine.Option(names = {"-ssh", "--ssh-agent"}, arity = "0..1", fallbackValue = "",
+        paramLabel = "SOCKET",
+        description = "decrypt SSH public key recipient with the matching key in ssh-agent. "
+            + "Agent socket path, default $SSH_AUTH_SOCK. Requires -Dkey-shares.properties")
+    private String sshAgentSocket;
+
     public File getPrivKeyFile() {
         return this.privKeyFile;
     }
@@ -70,6 +76,17 @@ public class DecryptionKeyExclusiveArgument {
 
     public String getSid() {
         return this.sid;
+    }
+
+    public boolean isWithSshAgent() {
+        return this.sshAgentSocket != null;
+    }
+
+    /**
+     * @return ssh-agent socket path, empty string for $SSH_AUTH_SOCK, {@code null} if option was not given
+     */
+    public String getSshAgentSocket() {
+        return this.sshAgentSocket;
     }
 
     public String getMid() {

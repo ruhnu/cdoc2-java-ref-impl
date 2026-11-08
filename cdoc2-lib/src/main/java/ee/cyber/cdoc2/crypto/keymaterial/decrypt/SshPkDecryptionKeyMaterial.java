@@ -1,6 +1,9 @@
 package ee.cyber.cdoc2.crypto.keymaterial.decrypt;
 
+import javax.annotation.Nullable;
+
 import ee.cyber.cdoc2.auth.SshPublicKeyParser;
+import ee.cyber.cdoc2.crypto.sshagent.SshAgentClient;
 import ee.cyber.cdoc2.crypto.EncryptionKeyOrigin;
 import ee.cyber.cdoc2.crypto.keymaterial.DecryptionKeyMaterial;
 
@@ -13,14 +16,35 @@ import ee.cyber.cdoc2.crypto.keymaterial.DecryptionKeyMaterial;
 public class SshPkDecryptionKeyMaterial implements DecryptionKeyMaterial {
 
     private final String recipientId;
+    @Nullable
+    private final SshAgentClient agent;
 
     /**
      * @param recipientId "ruhnu/pk/&lt;base64 OpenSSH public key blob&gt;" of a supported (P-256) key
      * @throws ee.cyber.cdoc2.auth.exception.InvalidSshPublicKeyException if key is malformed or not supported
      */
     public SshPkDecryptionKeyMaterial(String recipientId) {
+        this(recipientId, null);
+    }
+
+    /**
+     * @param recipientId "ruhnu/pk/&lt;base64 OpenSSH public key blob&gt;" of a supported (P-256) key
+     * @param agent       ssh-agent to sign with; {@code null} uses {@link SshAgentClient} from
+     *                    {@link ee.cyber.cdoc2.services.Services} or $SSH_AUTH_SOCK
+     * @throws ee.cyber.cdoc2.auth.exception.InvalidSshPublicKeyException if key is malformed or not supported
+     */
+    public SshPkDecryptionKeyMaterial(String recipientId, @Nullable SshAgentClient agent) {
         SshPublicKeyParser.validateRecipientId(recipientId);
         this.recipientId = recipientId;
+        this.agent = agent;
+    }
+
+    /**
+     * @return ssh-agent given to the constructor, or {@code null}
+     */
+    @Nullable
+    public SshAgentClient getAgent() {
+        return agent;
     }
 
     @Override

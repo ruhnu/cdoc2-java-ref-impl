@@ -28,6 +28,18 @@
         </pluginRepository>
     </pluginRepositories>
 
+    <dependencyManagement>
+        <dependencies>
+            <!-- same as cdoc2-lib; the test dependencies (wiremock) would otherwise pull in 2.3.3 (javax packages),
+                 which breaks jersey-media-json-jackson in tests -->
+            <dependency>
+                <groupId>jakarta.xml.bind</groupId>
+                <artifactId>jakarta.xml.bind-api</artifactId>
+                <version>4.0.2</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
     <dependencies>
         <dependency>
             <groupId>info.picocli</groupId>
@@ -43,6 +55,20 @@
             <groupId>ee.cyber.cdoc2</groupId>
             <artifactId>cdoc2-lib</artifactId>
             <version>${cdoc2-lib.version}</version>
+        </dependency>
+        <!-- TestSshAgent, wiremock keystore and client truststore for SSH recipient tests -->
+        <dependency>
+            <groupId>ee.cyber.cdoc2</groupId>
+            <artifactId>cdoc2-lib</artifactId>
+            <version>${cdoc2-lib.version}</version>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.wiremock</groupId>
+            <artifactId>wiremock</artifactId>
+            <version>3.13.2</version>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 
