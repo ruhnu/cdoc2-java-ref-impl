@@ -531,6 +531,66 @@ with method `InteractionParamsConfigurable.init()` while decrypting:
 ```
 
 
+## SSH public key recipients (ssh-agent)
+
+A CDOC2 document can be encrypted to an SSH public key and decrypted with the matching private key held in
+`ssh-agent`. Only ECDSA P-256 keys (`ecdsa-sha2-nistp256`) are supported.
+
+The key is split into N-of-N key shares on the shares servers, as for Smart-ID/Mobile-ID. To get the shares,
+the recipient signs the auth token with the SSH key through `ssh-agent`, which can sign but can't decrypt.
+The recipient identifier is the public key itself, `ruhnu/pk/<base64 OpenSSH public key blob>`. The scheme is
+described step by step in
+[CDOC2 with symmetric key from/to N-of-N shares (SSH public key, ssh-agent)](../README.md#cdoc2-with-symmetric-key-fromto-n-of-n-shares-ssh-public-key-ssh-agent).
+The token is signed once for all shares, so with an `ssh-add -c` key the user confirms only once.
+
+### Encrypting to an SSH public key
+
+```java
+// normally initialized through -D option to java process
+System.setProperty("key-shares.properties", "config/localhost/key-shares.properties");
+Services services = Cdoc2Services.initFromSystemProperties();
+
+EncryptionKeyMaterial sshRecipient = EncryptionKeyMaterial.fromSshPublicKeyFile(
+        Path.of(System.getProperty("user.home"), ".ssh", "id_ecdsa.pub"),
+        Duration.ofDays(7)); // requested share lifetime, null for shares server default
+// or EncryptionKeyMaterial.fromSshPublicKey("ecdsa-sha2-nistp256 AAAAE2Vj... user@host", null)
+
+new CDocBuilder()
+        .withPayloadFiles(List.of(payloadFile))
+        .withRecipients(List.of(sshRecipient))
+        .withServices(services)
+        .buildToFile(cdoc2FileToCreate);
+```
+
+Unsupported key types (Ed25519, RSA, other ECDSA curves) and malformed keys are rejected with
+`InvalidSshPublicKeyException` before anything is uploaded.
+
+### Decrypting with ssh-agent
+
+```java
+System.setProperty("key-shares.properties", "config/localhost/key-shares.properties");
+Services services = Cdoc2Services.initFromSystemProperties();
+
+// recipient identifier of the key to use, from its OpenSSH public key line
+String recipientId = SshPublicKeyParser.recipientIdFromOpenSshLine(
+        Files.readString(Path.of(System.getProperty("user.home"), ".ssh", "id_ecdsa.pub")));
+
+List<String> extractedFiles = new CDocDecrypter()
+        .withCDoc(cdoc2FileToDecrypt.toFile())
+        .withServices(services)
+        .withRecipient(DecryptionKeyMaterial.fromSshAgentKey(recipientId))
+        .withDestinationDirectory(destDir.toFile())
+        .decrypt();
+```
+
+The agent at `$SSH_AUTH_SOCK` is used, unless an `SshAgentClient` is registered in `Services`. The container's
+SSH recipients can be listed with `Envelope.parseHeader()`: they are `KeySharesRecipient`s with recipient type
+`KeyShareRecipientType.RUHNU`, whose `getRecipientId()` starts with `ruhnu/pk/`.
+
+Agent problems are reported as `SshAgentException` with a `getReason()`: `NO_AUTH_SOCK`, `CONNECTION_FAILED`,
+`KEY_NOT_FOUND` or `AGENT_REFUSED` (for example, the user declined an `ssh-add -c` confirmation).
+
+
 ## Long-term crypto
 
 Scenarios with id-card are meant for transport cryptography only as id-card certificates expiry and
