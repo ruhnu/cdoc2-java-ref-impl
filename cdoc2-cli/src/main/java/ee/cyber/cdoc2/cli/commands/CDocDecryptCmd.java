@@ -16,6 +16,7 @@ import ee.cyber.cdoc2.cli.DecryptionKeyExclusiveArgument;
 import ee.cyber.cdoc2.crypto.jwt.InteractionParams;
 import ee.cyber.cdoc2.crypto.keymaterial.DecryptionKeyMaterial;
 import ee.cyber.cdoc2.crypto.sshagent.SshAgentException;
+import ee.cyber.cdoc2.exceptions.KeyShareAccessException;
 import ee.cyber.cdoc2.services.Cdoc2Services;
 
 import static ee.cyber.cdoc2.cli.util.CDocCommonHelper.assignClientConfValuesToSystemProps;
@@ -95,13 +96,19 @@ public class CDocDecryptCmd implements Callable<Integer> {
             decrypt();
             return 0;
         } catch (Exception e) {
+            // readable errors instead of a stack trace: no agent, key not in agent, agent refused, and DID
+            // recipient shares refused (404) or the DID host unavailable (503)
             SshAgentException agentException = findCause(e, SshAgentException.class);
-            if (agentException == null) {
-                throw e;
+            if (agentException != null) {
+                System.err.println("ERROR: " + agentException.getMessage());
+                return 1;
             }
-            // readable error instead of a stack trace: no agent, key not in agent, agent refused
-            System.err.println("ERROR: " + agentException.getMessage());
-            return 1;
+            KeyShareAccessException accessException = findCause(e, KeyShareAccessException.class);
+            if (accessException != null) {
+                System.err.println("ERROR: " + accessException.getMessage());
+                return 1;
+            }
+            throw e;
         }
     }
 

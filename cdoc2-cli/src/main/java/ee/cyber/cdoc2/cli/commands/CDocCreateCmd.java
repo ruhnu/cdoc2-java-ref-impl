@@ -1,9 +1,12 @@
 package ee.cyber.cdoc2.cli.commands;
 
+import ee.cyber.cdoc2.auth.DidHostPolicy;
+import ee.cyber.cdoc2.auth.DidWebResolver;
 import ee.cyber.cdoc2.auth.exception.InvalidSshPublicKeyException;
 import ee.cyber.cdoc2.cli.util.InteractiveCommunicationUtil;
 import ee.cyber.cdoc2.cli.util.LabeledPasswordParamConverter;
 import ee.cyber.cdoc2.cli.util.LabeledPasswordParam;
+import ee.cyber.cdoc2.client.ExtApiException;
 import ee.cyber.cdoc2.client.KeySharesClientFactory;
 import ee.cyber.cdoc2.crypto.keymaterial.LabeledPassword;
 import ee.cyber.cdoc2.crypto.keymaterial.LabeledSecret;
@@ -11,7 +14,10 @@ import ee.cyber.cdoc2.cli.util.LabeledSecretConverter;
 import ee.cyber.cdoc2.cli.util.CliConstants;
 import ee.cyber.cdoc2.CDocBuilder;
 import ee.cyber.cdoc2.crypto.keymaterial.EncryptionKeyMaterial;
+import ee.cyber.cdoc2.crypto.keymaterial.encrypt.DidRecipients;
 import ee.cyber.cdoc2.crypto.keymaterial.encrypt.EstEncKeyMaterialBuilder;
+import ee.cyber.cdoc2.crypto.keymaterial.encrypt.SshDidEncryptionKeyMaterial;
+import ee.cyber.cdoc2.exceptions.DidRecipientException;
 import ee.cyber.cdoc2.services.Cdoc2Services;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -49,6 +55,8 @@ public class CDocCreateCmd implements Callable<Integer> {
     private static final Logger log = LoggerFactory.getLogger(CDocCreateCmd.class);
 
     private static final String DURATION_FORMAT = "P(n)DT(n)H(n)M(n)S";
+
+    private static final int HTTP_BAD_REQUEST = 400;
 
     // default server configuration disabled, until public key server is up and running
     //private static final String DEFAULT_SERVER_PROPERTIES = "classpath:localhost.properties";
@@ -97,6 +105,14 @@ public class CDocCreateCmd implements Callable<Integer> {
                 + "or one OpenSSH public key line, such as a line of `ssh-add -L` output. "
                 + "Decrypted with the matching key in ssh-agent. Requires -Dkey-shares.properties")
         private String[] sshPublicKeys;
+
+        @Option(names = {"-did", "--did"},
+            paramLabel = "DID",
+            description = "recipient did:web DID, such as did:web:example.org:p:alice. Encrypts to every "
+                + "ecdsa-sha2-nistp256 key its DID document lists under authentication; the keys are pinned now "
+                + "and printed. Shares servers release shares only while the DID document still lists the key. "
+                + "Decrypted with the matching key in ssh-agent. Requires -Dkey-shares.properties")
+        private String[] dids;
     }
 
     // allow -Dkey for setting System properties
@@ -129,8 +145,8 @@ public class CDocCreateCmd implements Callable<Integer> {
     private Duration keyCapsuleExpiryDuration;
 
     @Option(names = { "-sexp", "--share-expiry" }, paramLabel = DURATION_FORMAT,
-        description = "Requested key share lifetime for SSH public key recipients (--ssh-pubkey). "
-            + "The shares server may shorten it. Default: shares server default",
+        description = "Requested key share lifetime for SSH public key and DID recipients (--ssh-pubkey, "
+            + "--did). The shares server may shorten it. Default: shares server default",
         converter = DurationConverter.class
     )
     private Duration shareLifetime;
@@ -147,14 +163,35 @@ public class CDocCreateCmd implements Callable<Integer> {
             // readable error instead of a stack trace
             System.err.println("ERROR: Invalid SSH public key: " + e.getMessage());
             return 1;
+        } catch (DidRecipientException e) {
+            System.err.println("ERROR: " + e.getMessage());
+            return 1;
+        } catch (Exception e) {
+            ExtApiException apiException = findCause(e, ExtApiException.class);
+            if (isWithDid() && apiException != null && apiException.httpStatus().orElse(0) == HTTP_BAD_REQUEST) {
+                // the shares server's cdoc2.ruhnu.did.allowed-hosts may not contain the DID host
+                System.err.println("ERROR: " + apiException.getMessage()
+                    + "; the DID host may not be allowed there");
+                return 1;
+            }
+            throw e;
         }
+    }
+
+    private static <T extends Throwable> T findCause(Throwable t, Class<T> type) {
+        for (Throwable c = t; c != null; c = c.getCause()) {
+            if (type.isInstance(c)) {
+                return type.cast(c);
+            }
+        }
+        return null;
     }
 
     private void create() throws Exception {
 
         if (log.isDebugEnabled()) {
             log.debug("create --file={} --pubkey={} --cert={} --recipient={} --secret={} "
-                    + "--password={} --smart-id={} --mobile-id={} --ssh-pubkey={} {}",
+                    + "--password={} --smart-id={} --mobile-id={} --ssh-pubkey={} --did={} {}",
                 cdocFile,
                 Arrays.toString(recipient.pubKeys),
                 Arrays.toString(recipient.certs),
@@ -164,6 +201,7 @@ public class CDocCreateCmd implements Callable<Integer> {
                 Arrays.toString(recipient.sidCodes),
                 Arrays.toString(recipient.midCodes),
                 Arrays.toString(recipient.sshPublicKeys),
+                Arrays.toString(recipient.dids),
                 censorFileNames(inputFiles));
         }
 
@@ -228,9 +266,9 @@ public class CDocCreateCmd implements Callable<Integer> {
     private void addAuthRecipientsIfAny(
         List<EncryptionKeyMaterial> recipients,
         CDocBuilder cDocBuilder
-    ) throws GeneralSecurityException, NamingException, IOException {
+    ) throws GeneralSecurityException, NamingException, IOException, DidRecipientException {
 
-        if (isWithSid() || isWithMid() || isWithSsh()) {
+        if (isWithSid() || isWithMid() || isWithSsh() || isWithDid()) {
             KeySharesClientFactory keySharesClientFactory =
                 Cdoc2Services.initFromSystemProperties().get(KeySharesClientFactory.class);
             cDocBuilder.withKeyShares(keySharesClientFactory);
@@ -240,8 +278,13 @@ public class CDocCreateCmd implements Callable<Integer> {
             for (String sshPublicKey : this.recipient.sshPublicKeys) {
                 recipients.add(sshRecipient(sshPublicKey));
             }
-        } else if (this.shareLifetime != null) {
-            log.warn("WARNING: --share-expiry is used only for SSH public key recipients (--ssh-pubkey)");
+        }
+        if (isWithDid()) {
+            addDidRecipients(recipients);
+        }
+        if (!isWithSsh() && !isWithDid() && this.shareLifetime != null) {
+            log.warn("WARNING: --share-expiry is used only for SSH public key and DID recipients "
+                + "(--ssh-pubkey, --did)");
         }
 
         List<EncryptionKeyMaterial> etsiRecipients = new EstEncKeyMaterialBuilder()
@@ -265,6 +308,29 @@ public class CDocCreateCmd implements Callable<Integer> {
 
     private boolean isWithSsh() {
         return this.recipient.sshPublicKeys != null;
+    }
+
+    private boolean isWithDid() {
+        return this.recipient != null && this.recipient.dids != null;
+    }
+
+    /**
+     * Resolve each DID and pin every key its document lists. Fails before anything is uploaded.
+     */
+    private void addDidRecipients(List<EncryptionKeyMaterial> recipients) throws DidRecipientException {
+        DidWebResolver resolver = DidWebResolver.createDefault(
+            DidWebResolver.DEFAULT_CONNECT_TIMEOUT, DidWebResolver.DEFAULT_DEADLINE, DidHostPolicy.ALLOW_ALL);
+        for (String did : this.recipient.dids) {
+            DidRecipients.Resolved resolved = DidRecipients.resolve(did, this.shareLifetime, resolver);
+            for (String skipped : resolved.skipped()) {
+                System.err.println("WARNING: " + resolved.did() + ": skipped " + skipped);
+            }
+            for (SshDidEncryptionKeyMaterial keyMaterial : resolved.keyMaterials()) {
+                System.out.println("Pinned " + keyMaterial.recipientId() + " (" + keyMaterial.openSshFingerprint()
+                    + ")");
+                recipients.add(keyMaterial);
+            }
+        }
     }
 
     /**

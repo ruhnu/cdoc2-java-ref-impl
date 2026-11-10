@@ -237,6 +237,34 @@ Anyone who can use the recipient's `ssh-agent` can decrypt. With a forwarded age
 on the remote host, so prefer decrypting locally, and consider `ssh-add -c` (confirm every use) or a FIDO key.
 Access ends when the shares expire; deleting the shares on any one server revokes it earlier.
 
+### CDOC2 with symmetric key from/to N-of-N shares (DID, ssh-agent)
+
+Same as the SSH public key scenario, but the recipient is an SSH key that a `did:web` DID document lists, and
+each shares server releases its share only while the DID document still lists the key. The DID host can withdraw
+access (remove the key, remove the document, go offline) but can't grant it: the container pins the key's
+fingerprint, so a key the DID host adds later opens nothing. Shares servers must have DID recipients enabled
+for the DID host (`cdoc2.ruhnu.enabled=true`, `cdoc2.ruhnu.did.allowed-hosts`).
+
+1. Sender resolves the DID, for example `did:web:example.org:p:alice`, by fetching
+   `https://example.org/p/alice/did.json` (no redirects). Every ECDSA P-256 `publicKeyJwk` key the document lists
+   under `authentication`, with the DID as `controller`, becomes a recipient
+   `ruhnu/did/<did>/hash/<fingerprint>`. `<fingerprint>` is the unpadded base64url SHA-256 of the key's OpenSSH
+   public key blob: the `ssh-keygen -l` fingerprint with `+/` replaced by `-_`. The DID host is trusted at this
+   moment; the sender sees the pinned fingerprints.
+2. *Follow steps 2-6 of the SSH public key scenario*, with `ruhnu/did/<did>/hash/<fingerprint>` as recipient.
+   Shares servers refuse shares for DID hosts they don't allow.
+3. Recipient finds `KeySharesCapsule` records with `recipient_type` `RUHNU` and `recipient_id` starting with
+   `ruhnu/did/`, and checks that `ssh-agent` holds a key with that fingerprint. The recipient doesn't resolve the
+   DID.
+4. *Follow steps 8-11 of the SSH public key scenario*, with `iss` = `ruhnu/did/<did>/hash/<fingerprint>`. The
+   signed JWS header also carries the public key, as `jwk`, because the identifier holds only its fingerprint.
+5. Each shares server checks the token without network access (the `jwk` key has the fingerprint in `iss` and
+   verifies the `ES256` signature; `aud` and nonce as before), that `iss` equals the share's recipient and the
+   share has not expired, and that the DID host is still allowed. Only then does it fetch the DID document and
+   release the `share` if the document still lists the key. It answers 503 if the DID host can't be reached
+   (the client may retry with the same token until the nonce expires), and 404 otherwise.
+6. *Follow steps from Smart-ID/Mobile-ID scenario 17-18*
+
 
 ## Structure
 [![CDOC2 Dependencies](./cdoc2-docs/img/deps.drawio.png)](https://viewer.diagrams.net/?tags=%7B%7D&lightbox=1&highlight=0000ff&edit=_blank&layers=1&nav=1#R%3Cmxfile%3E%3Cdiagram%20id%3D%22cR2MIER7KRh0lRtEKnlR%22%20name%3D%22Page-1%22%3E3VjbcpswEP0aP9rDJRD86EucTifteOKZtOmbAjIoEYgIYZt8fSUjgriY0DQNHT9ZOtpdSWcvWjMyF%2BHhmoI4%2BEY8iEeG5h1G5nJkGLplG%2FxHIFmOOLaTAz5FnhQqgQ16gRLUJJoiDyYVQUYIZiiugi6JIuiyCgYoJfuq2Jbg6q4x8OWOWglsXIBhQ%2BwH8lggUV1TxL9A5Adya8eSCyEohCWQBMAjewUyr0bmghLC8lF4WEAsyCt4yfVWJ1ZfD0ZhxPooPN4%2Fb%2BB0%2B7RazuaPaTzzV7d4rNvycCwrbgw9ToCcEsoC4pMI4KsSnVOSRh4UZjU%2BK2VuCIk5qHPwETKWSW%2BClBEOBSzEchUeEPupjO%2BFqYklZ8uDtHycZHISEeUIR80mAZKThKTUlbf5lVpIu%2F66eFnDG%2FP5ln1%2FuEvHMiYZoD5kHXJWLicYUTaQ9F5DEkJGMy5AIQYM7aohA2Tk%2Ba9ypXP4QPrnT3zlDOkrbWJPFXfpnc7iHqGZqiXmQm2sTTSnAErd4%2By0p4XtNaSI8wipqlMHPzQkWp1gDxUSXafeAZzKnTB6aEQJrzyxGIbES49BATDyIw5guOV3nScxcFHk3xxnS0NTJFxOpGB3voOUIV4WZ3KBifCZ7wPE4IarC%2FN7%2FgJUY%2BekO4Q1eOgksFi9lHeU74cpq%2BleKcZFLQ6UOlyU4Q%2Bn3GxQPjJsLGj00I4PfTEkMYxAjIoVvpGyeNb%2BMbShHWQ1HJS4AQzBWdFuXmiDpUX743QxxOP0zqag9QZmz6bA%2BK%2BagmY5cjE6r1B%2FM9Knnxnodhvh4nbnxHm9quvG4PXFHKK%2BqH2spfaxZdfau4dt61eV5vpSba4n2kV3f93SEL%2B%2F8tk9K5%2F50ZVPqq4JEvlTBF894%2FVpLajyC0mtWly9HqNXqG3Q3Rbs3ZWz1FY0A8H64ellXGRLmeE8MIKzyu96%2B6Drn5jfraS3tdX1fI%2B8mfiiIwjEIEmQW%2BWlmu1t3xj6%2Fmk9nel6M9X%2F%2FR%2FRrih9MxkVj1odDv3bnDVqr7TTL2ebhi5rhsyaoZyYdyQ%2Fn5Yf23Lx8pOlefUb%3C%2Fdiagram%3E%3C%2Fmxfile%3E)

@@ -21,11 +21,14 @@ import ee.cyber.cdoc2.CryptoStickConf;
 import ee.cyber.cdoc2.cli.DecryptionKeyExclusiveArgument;
 import ee.cyber.cdoc2.container.CDocParseException;
 import ee.cyber.cdoc2.container.Envelope;
+import ee.cyber.cdoc2.auth.DidRecipientId;
 import ee.cyber.cdoc2.auth.SshPublicKeyParser;
+import ee.cyber.cdoc2.auth.exception.InvalidDidRecipientException;
 import ee.cyber.cdoc2.auth.exception.InvalidSshPublicKeyException;
 import ee.cyber.cdoc2.container.recipients.KeySharesRecipient;
 import ee.cyber.cdoc2.container.recipients.PBKDF2Recipient;
 import ee.cyber.cdoc2.container.recipients.Recipient;
+import ee.cyber.cdoc2.crypto.keymaterial.decrypt.SshDidDecryptionKeyMaterial;
 import ee.cyber.cdoc2.crypto.keymaterial.decrypt.SshPkDecryptionKeyMaterial;
 import ee.cyber.cdoc2.crypto.sshagent.SshAgentClient;
 import ee.cyber.cdoc2.crypto.sshagent.SshAgentException;
@@ -163,8 +166,9 @@ public final class CDocDecryptionHelper {
     }
 
     /**
-     * Find the SSH public key recipient of the container whose key ssh-agent holds. Nothing is sent to shares
-     * servers if there is none.
+     * Find the first SSH public key ("ruhnu/pk/") or DID ("ruhnu/did/") recipient of the container, in container
+     * order, whose key ssh-agent holds. SSH public key recipients match by key, DID recipients by key fingerprint;
+     * the DID is not resolved. Nothing is sent to shares servers if there is no match.
      * @param cdocFile container
      * @param socket ssh-agent socket path, empty for $SSH_AUTH_SOCK
      */
@@ -175,36 +179,67 @@ public final class CDocDecryptionHelper {
         for (Recipient recipient : Envelope.parseHeader(Files.newInputStream(cdocFile.toPath()))) {
             if (recipient instanceof KeySharesRecipient ksr
                 && ksr.getRecipientType() == KeyShareRecipientType.RUHNU
-                && ksr.getRecipientId().toString().startsWith(SshPublicKeyParser.RECIPIENT_ID_PREFIX)) {
+                && (ksr.getRecipientId().toString().startsWith(SshPublicKeyParser.RECIPIENT_ID_PREFIX)
+                    || DidRecipientId.isDidRecipientId(ksr.getRecipientId().toString()))) {
                 sshRecipients.add(ksr.getRecipientId().toString());
             }
         }
         if (sshRecipients.isEmpty()) {
             throw new SshAgentException(SshAgentException.Reason.KEY_NOT_FOUND,
-                cdocFile + " has no SSH public key recipient");
+                cdocFile + " has no SSH public key or DID recipient");
         }
 
         SshAgentClient agent = socket.isEmpty()
             ? SshAgentClient.fromEnvironment()
             : new SshAgentClient(Path.of(socket));
+        List<SshAgentClient.Identity> identities = agent.listIdentities();
 
-        for (SshAgentClient.Identity identity : agent.listIdentities()) {
-            String recipientId;
-            try {
-                recipientId = SshPublicKeyParser.recipientIdFromBlob(identity.keyBlob());
-            } catch (InvalidSshPublicKeyException e) {
-                continue; // agent key type not supported (ed25519, rsa, ...)
-            }
-            if (sshRecipients.contains(recipientId)) {
-                log.info("Using ssh-agent key {} ({})", identity.comment(),
-                    SshPublicKeyParser.fingerprintFromRecipientId(recipientId));
-                return new SshPkDecryptionKeyMaterial(recipientId, agent);
+        for (String recipientId : sshRecipients) {
+            for (SshAgentClient.Identity identity : identities) {
+                DecryptionKeyMaterial match = matchAgentKey(recipientId, identity, agent);
+                if (match != null) {
+                    log.info("Using ssh-agent key {} ({}) for {}", identity.comment(),
+                        SshPublicKeyParser.openSshFingerprint(identity.keyBlob()), recipientId);
+                    return match;
+                }
             }
         }
 
         throw new SshAgentException(SshAgentException.Reason.KEY_NOT_FOUND,
             "No matching key found in ssh-agent. " + cdocFile + " can be decrypted with: "
-                + sshRecipients.stream().map(SshPublicKeyParser::fingerprintFromRecipientId).toList());
+                + sshRecipients.stream().map(CDocDecryptionHelper::describeSshRecipient).toList());
+    }
+
+    /** Key material for the recipient if the agent identity is its key, null otherwise */
+    @Nullable
+    private static DecryptionKeyMaterial matchAgentKey(
+        String recipientId, SshAgentClient.Identity identity, SshAgentClient agent
+    ) {
+        try {
+            if (DidRecipientId.isDidRecipientId(recipientId)) {
+                return DidRecipientId.parse(recipientId).matches(identity.keyBlob())
+                    ? new SshDidDecryptionKeyMaterial(recipientId, identity.keyBlob(), agent)
+                    : null;
+            }
+            return recipientId.equals(SshPublicKeyParser.recipientIdFromBlob(identity.keyBlob()))
+                ? new SshPkDecryptionKeyMaterial(recipientId, agent)
+                : null;
+        } catch (InvalidSshPublicKeyException | InvalidDidRecipientException e) {
+            return null; // agent key type not supported (ed25519, rsa, ...) or malformed recipient
+        }
+    }
+
+    /** "SHA256:..." for SSH public key recipients, "did:web:... SHA256:..." for DID recipients */
+    private static String describeSshRecipient(String recipientId) {
+        try {
+            if (DidRecipientId.isDidRecipientId(recipientId)) {
+                DidRecipientId id = DidRecipientId.parse(recipientId);
+                return id.did() + " " + id.openSshFingerprint();
+            }
+            return SshPublicKeyParser.fingerprintFromRecipientId(recipientId);
+        } catch (InvalidSshPublicKeyException | InvalidDidRecipientException e) {
+            return recipientId + " (invalid)";
+        }
     }
 
     private static DecryptionKeyMaterial getSidDecryptionKeyMaterial(

@@ -4,7 +4,6 @@ import java.time.Duration;
 import javax.annotation.Nullable;
 
 import ee.cyber.cdoc2.crypto.EncryptionKeyOrigin;
-import ee.cyber.cdoc2.crypto.keymaterial.EncryptionKeyMaterial;
 
 
 /**
@@ -19,7 +18,7 @@ public record SshPkEncryptionKeyMaterial(
     String recipientId,
     String keyLabel,
     @Nullable Duration shareLifetime
-) implements EncryptionKeyMaterial {
+) implements RuhnuEncryptionKeyMaterial {
 
     @Override
     public String getLabel() {

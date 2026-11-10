@@ -7,12 +7,15 @@ import java.util.Objects;
 
 import com.google.flatbuffers.FlatBufferBuilder;
 
+import ee.cyber.cdoc2.auth.DidRecipientId;
 import ee.cyber.cdoc2.auth.SshPublicKeyParser;
+import ee.cyber.cdoc2.auth.exception.InvalidDidRecipientException;
 import ee.cyber.cdoc2.client.KeySharesClientFactory;
 import ee.cyber.cdoc2.crypto.KekTools;
 import ee.cyber.cdoc2.crypto.KeyShareUri;
 import ee.cyber.cdoc2.crypto.keymaterial.DecryptionKeyMaterial;
 import ee.cyber.cdoc2.crypto.keymaterial.decrypt.KeyShareDecryptionKeyMaterial;
+import ee.cyber.cdoc2.crypto.keymaterial.decrypt.SshDidDecryptionKeyMaterial;
 import ee.cyber.cdoc2.crypto.keymaterial.decrypt.SshPkDecryptionKeyMaterial;
 import ee.cyber.cdoc2.exceptions.CDocException;
 import ee.cyber.cdoc2.fbs.recipients.KeyShareRecipientType;
@@ -108,10 +111,22 @@ public class KeySharesRecipient extends Recipient {
         Services services
     ) throws GeneralSecurityException, CDocException {
 
-        if (recipientType == KeyShareRecipientType.RUHNU
-            && !recipientId.startsWith(SshPublicKeyParser.RECIPIENT_ID_PREFIX)) {
-            throw new CDocException("Unsupported recipient kind: " + recipientId
-                + ", only \"" + SshPublicKeyParser.RECIPIENT_ID_PREFIX + "\" ruhnu recipients are supported");
+        if (recipientType == KeyShareRecipientType.RUHNU) {
+            checkRuhnuRecipientId(recipientId);
+        }
+
+        if (keyMaterial instanceof SshDidDecryptionKeyMaterial didKeyMaterial) {
+            if (services == null || !services.hasService(KeySharesClientFactory.class)) {
+                throw new CDocException("KeyShares service not initialized. "
+                    + "Make sure you have provided the -Dkey-shares.properties option.");
+            }
+
+            return KekTools.deriveKekFromSshDidShares(
+                this,
+                didKeyMaterial,
+                services.get(KeySharesClientFactory.class),
+                services
+            );
         }
 
         if (keyMaterial instanceof SshPkDecryptionKeyMaterial sshKeyMaterial) {
@@ -145,6 +160,27 @@ public class KeySharesRecipient extends Recipient {
         throw new GeneralSecurityException(
             "Unsupported key material type for recipient " + keyMaterial.getRecipientId()
         );
+    }
+
+    /**
+     * Check that a {@link KeyShareRecipientType#RUHNU} recipient is of a kind this client supports ("ruhnu/pk/" or
+     * "ruhnu/did/") and, for DID recipients, a valid identifier. Called before anything is sent to shares servers.
+     */
+    private static void checkRuhnuRecipientId(String recipientId) throws CDocException {
+        if (recipientId.startsWith(SshPublicKeyParser.RECIPIENT_ID_PREFIX)) {
+            return;
+        }
+        if (DidRecipientId.isDidRecipientId(recipientId)) {
+            try {
+                DidRecipientId.parse(recipientId);
+                return;
+            } catch (InvalidDidRecipientException e) {
+                throw new CDocException("Invalid recipient identifier " + recipientId + ": " + e.getMessage(), e);
+            }
+        }
+        throw new CDocException("Unsupported recipient kind: " + recipientId
+            + ", only \"" + SshPublicKeyParser.RECIPIENT_ID_PREFIX + "\" and \"" + DidRecipientId.PREFIX
+            + "\" ruhnu recipients are supported");
     }
 
     @Override

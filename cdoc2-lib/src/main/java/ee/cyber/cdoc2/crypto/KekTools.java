@@ -20,9 +20,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.nimbusds.jose.JOSEException;
+import com.nimbusds.jose.jwk.Curve;
+import com.nimbusds.jose.jwk.ECKey;
+import com.nimbusds.jose.jwk.JWK;
 
 import ee.cyber.cdoc2.UserErrorCode;
 import ee.cyber.cdoc2.auth.AuthTokenCreator;
+import ee.cyber.cdoc2.auth.DidRecipientId;
 import ee.cyber.cdoc2.auth.EtsiIdentifier;
 import ee.cyber.cdoc2.auth.ShareAccessData;
 import ee.cyber.cdoc2.auth.SshPublicKeyParser;
@@ -56,6 +60,7 @@ import ee.cyber.cdoc2.crypto.keymaterial.decrypt.KeyPairDecryptionKeyMaterial;
 import ee.cyber.cdoc2.crypto.keymaterial.decrypt.KeyShareDecryptionKeyMaterial;
 import ee.cyber.cdoc2.crypto.keymaterial.decrypt.PasswordDecryptionKeyMaterial;
 import ee.cyber.cdoc2.crypto.keymaterial.decrypt.SecretDecryptionKeyMaterial;
+import ee.cyber.cdoc2.crypto.keymaterial.decrypt.SshDidDecryptionKeyMaterial;
 import ee.cyber.cdoc2.crypto.keymaterial.decrypt.SshPkDecryptionKeyMaterial;
 import ee.cyber.cdoc2.crypto.sshagent.SshAgentClient;
 import ee.cyber.cdoc2.crypto.sshagent.SshAgentException;
@@ -63,6 +68,7 @@ import ee.cyber.cdoc2.crypto.sshagent.SshAgentJWSSigner;
 import ee.cyber.cdoc2.exceptions.AuthSignatureCreationException;
 import ee.cyber.cdoc2.exceptions.CDocException;
 import ee.cyber.cdoc2.exceptions.CDocUserException;
+import ee.cyber.cdoc2.exceptions.KeyShareAccessException;
 import ee.cyber.cdoc2.fbs.header.FMKEncryptionMethod;
 import ee.cyber.cdoc2.services.Services;
 
@@ -73,6 +79,7 @@ import ee.cyber.cdoc2.services.Services;
 public final class KekTools {
 
     private static final Logger log = LoggerFactory.getLogger(KekTools.class);
+    private static final int HTTP_SERVICE_UNAVAILABLE = 503;
     private static final String MUST_CONTAIN_RSA_KEY_PAIR_FOR_RSA_SCENARIO =
         "must contain RSA key pair for RSA scenario";
 
@@ -375,18 +382,90 @@ public final class KekTools {
             throw new CDocException("Key material does not match recipient " + recipientId);
         }
 
-        SshAgentClient agent;
-        if (keyMaterial.getAgent() != null) {
-            agent = keyMaterial.getAgent();
-        } else if (services != null && services.hasService(SshAgentClient.class)) {
-            agent = services.get(SshAgentClient.class);
-        } else {
-            agent = SshAgentClient.fromEnvironment();
+        return deriveKekWithAgentKey(
+            keySharesRecipient,
+            keyMaterial.getKeyBlob(),
+            agentFor(keyMaterial.getAgent(), services),
+            null,
+            null,
+            keySharesClientFactory
+        );
+    }
+
+    /**
+     * Derive KEK for "ruhnu/did/" DID recipient. Signs the auth token with the key in ssh-agent and puts the
+     * key's public JWK into the JWS "jwk" header, as the identifier holds only the key's fingerprint. The client
+     * does not resolve the DID; each shares server checks that the DID document still lists the key.
+     * <ol>
+     * <li>check that ssh-agent holds the key (before anything is sent to shares servers)
+     * <li>get nonce from each shares server, without session headers
+     * <li>sign one SD-JWT auth token (iss = recipient id, ES256, "jwk" header) for all shares through ssh-agent
+     * <li>get each share with only the auth token, combine shares into KEK
+     * </ol>
+     * @param keySharesRecipient     recipient with "ruhnu/did/" recipient id
+     * @param keyMaterial            identifies the agent key
+     * @param keySharesClientFactory key shares clients
+     * @param services               may contain {@link SshAgentClient}; used when key material has no agent,
+     *                               otherwise $SSH_AUTH_SOCK is used
+     * @return KEK
+     * @throws SshAgentException if ssh-agent is not available, does not hold the key or refuses to sign
+     * @throws KeyShareAccessException if a shares server refuses the share (404) or cannot reach the DID host (503)
+     */
+    public static byte[] deriveKekFromSshDidShares(
+        KeySharesRecipient keySharesRecipient,
+        SshDidDecryptionKeyMaterial keyMaterial,
+        KeySharesClientFactory keySharesClientFactory,
+        Services services
+    ) throws GeneralSecurityException, CDocException {
+
+        String recipientId = (String) keySharesRecipient.getRecipientId();
+        if (!recipientId.equals(keyMaterial.getRecipientId())) {
+            throw new CDocException("Key material does not match recipient " + recipientId);
         }
+
         byte[] keyBlob = keyMaterial.getKeyBlob();
+        JWK headerJwk = new ECKey.Builder(Curve.P_256, SshPublicKeyParser.fromBlob(keyBlob)).build();
+        return deriveKekWithAgentKey(
+            keySharesRecipient,
+            keyBlob,
+            agentFor(keyMaterial.getAgent(), services),
+            headerJwk,
+            DidRecipientId.parse(recipientId).did(),
+            keySharesClientFactory
+        );
+    }
+
+    private static SshAgentClient agentFor(@Nullable SshAgentClient agent, Services services)
+        throws SshAgentException {
+        if (agent != null) {
+            return agent;
+        } else if (services != null && services.hasService(SshAgentClient.class)) {
+            return services.get(SshAgentClient.class);
+        } else {
+            return SshAgentClient.fromEnvironment();
+        }
+    }
+
+    /**
+     * Nonce, agent-signed auth token (iss = recipient id) and share retrieval for "ruhnu/" recipients
+     * @param headerJwk public JWK for the JWS "jwk" header, null for none
+     * @param did       DID of a "ruhnu/did/" recipient, used for its error messages; null for "ruhnu/pk/"
+     */
+    @SuppressWarnings("checkstyle:ParameterNumber")
+    private static byte[] deriveKekWithAgentKey(
+        KeySharesRecipient keySharesRecipient,
+        byte[] keyBlob,
+        SshAgentClient agent,
+        @Nullable JWK headerJwk,
+        @Nullable String did,
+        KeySharesClientFactory keySharesClientFactory
+    ) throws GeneralSecurityException, CDocException {
+
+        String recipientId = (String) keySharesRecipient.getRecipientId();
         if (!agent.hasKey(keyBlob)) {
+            String key = SshPublicKeyParser.openSshFingerprint(keyBlob) + ((did == null) ? "" : " of " + did);
             throw new SshAgentException(SshAgentException.Reason.KEY_NOT_FOUND,
-                "No matching key found in ssh-agent for " + SshPublicKeyParser.fingerprintFromRecipientId(recipientId));
+                "No matching key found in ssh-agent for " + key);
         }
 
         List<KeyShareUri> shares = keySharesRecipient.getKeyShares();
@@ -406,10 +485,13 @@ public final class KekTools {
             }
         }
 
-        AuthTokenCreator tokenCreator = AuthTokenCreator.builder()
+        AuthTokenCreator.Builder tokenBuilder = AuthTokenCreator.builder()
             .withIssuer(recipientId)
-            .withSharesAccessData(accessData)
-            .build();
+            .withSharesAccessData(accessData);
+        if (headerJwk != null) {
+            tokenBuilder.withHeaderJwk(headerJwk);
+        }
+        AuthTokenCreator tokenCreator = tokenBuilder.build();
         try {
             tokenCreator.sign(new SshAgentJWSSigner(agent, keyBlob));
         } catch (SshAgentJWSSigner.SshAgentJOSEException e) {
@@ -421,18 +503,32 @@ public final class KekTools {
         List<byte[]> listOfShares = new LinkedList<>();
         for (KeyShareUri share : shares) {
             KeySharesClient client = keySharesClientFactory.getClientForServerUrl(share.serverBaseUrl());
+            Optional<KeyShare> keyShare;
             try {
-                Optional<KeyShare> keyShare = client.getKeyShare(
+                keyShare = client.getKeyShare(
                     share.shareId(),
                     tokenCreator.createTokenForShareId(share.shareId()),
                     null, null, null, null, null
                 );
-                listOfShares.add(keyShare.orElseThrow(() -> new GeneralSecurityException(String.format(
-                    "Failed to find share ID %s at server %s", share.shareId(), share.serverBaseUrl()
-                ))).getShare());
             } catch (ExtApiException e) {
+                if (did != null && e.httpStatus().orElse(0) == HTTP_SERVICE_UNAVAILABLE) {
+                    throw new KeyShareAccessException(String.format(
+                        "Shares server %s could not reach the DID host of %s; try again later",
+                        share.serverBaseUrl(), did), true, e);
+                }
                 throw new GeneralSecurityException("Failed to derive key encryption key from shares", e);
             }
+            if (keyShare.isEmpty()) {
+                if (did != null) {
+                    throw new KeyShareAccessException(String.format(
+                        "Shares server %s refused share ID %s: the share was not found, has expired, or the key "
+                            + "is no longer listed in the DID document of %s",
+                        share.serverBaseUrl(), share.shareId(), did), false, null);
+                }
+                throw new GeneralSecurityException(String.format(
+                    "Failed to find share ID %s at server %s", share.shareId(), share.serverBaseUrl()));
+            }
+            listOfShares.add(keyShare.get().getShare());
         }
 
         return Crypto.combineKek(
