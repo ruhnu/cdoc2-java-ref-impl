@@ -254,6 +254,74 @@ Security notes:
   host. Prefer decrypting locally, and add the key with `ssh-add -c` (confirm every use) or use a FIDO key.
 * To revoke access before the shares expire, the shares must be deleted on at least one shares server.
 
+### Docker image (SSH key recipients)
+
+The container image `ghcr.io/ruhnu/ruhnu-cli` runs cdoc2-cli without a local Java installation. It is
+published for linux/amd64 and linux/arm64 when cdoc2-java-ref-impl is tagged: `v*` tags as `:<tag>` and
+`:latest`, `dev-*` tags as `:<tag>`. It supports encrypting to SSH public keys and decrypting through your
+ssh-agent, as described above. Smart-ID, Mobile-ID and ID-card are not supported in the image.
+
+The container sees only what you mount into it, and paths in arguments and in `key-shares.properties` are
+paths in the container:
+* `/work`: your files, for example the current directory
+* `/config`: `key-shares.properties` and the truststore it names, for example `~/.config/cdoc2`
+* `/ssh-agent.sock`: your agent socket, with `SSH_AUTH_SOCK` pointing to it (decryption only)
+
+Run the container as your own user (`--user "$(id -u):$(id -g)"`): ssh-agent only serves the user who
+started it, and decrypted files are then owned by you.
+
+`localhost` in the container is the container itself. If the shares servers run on your machine, as in
+`config/localhost`, add `--network host` (Linux).
+
+For example, with `~/.config/cdoc2/key-shares.properties` containing
+`cdoc2.key-shares.client.ssl.trust-store=/config/clienttruststore.jks` and the truststore next to it:
+
+```
+docker run --rm --user "$(id -u):$(id -g)" \
+  -v "$PWD:/work" -v "$HOME/.config/cdoc2:/config:ro" \
+  ghcr.io/ruhnu/ruhnu-cli:latest create -Dkey-shares.properties=/config/key-shares.properties \
+  --ssh-pubkey "$(ssh-add -L | grep -m1 ecdsa-sha2-nistp256)" -f ssh.cdoc2 README.md
+
+mkdir -p out
+docker run --rm --user "$(id -u):$(id -g)" \
+  -v "$PWD:/work" -v "$HOME/.config/cdoc2:/config:ro" \
+  -v "$SSH_AUTH_SOCK:/ssh-agent.sock" -e SSH_AUTH_SOCK=/ssh-agent.sock \
+  ghcr.io/ruhnu/ruhnu-cli:latest decrypt -Dkey-shares.properties=/config/key-shares.properties \
+  --ssh-agent -f ssh.cdoc2 -o out
+```
+
+A shell function makes this read like the plain CLI, for files in the current directory. Set
+`RUHNU_CLI_IMAGE` to use another image tag:
+
+```
+cdoc2() {
+  local cmd="$1"; shift
+  docker run --rm --user "$(id -u):$(id -g)" \
+    -v "$PWD:/work" -v "$HOME/.config/cdoc2:/config:ro" \
+    -v "$SSH_AUTH_SOCK:/ssh-agent.sock" -e SSH_AUTH_SOCK=/ssh-agent.sock \
+    "${RUHNU_CLI_IMAGE:-ghcr.io/ruhnu/ruhnu-cli:latest}" \
+    "$cmd" -Dkey-shares.properties=/config/key-shares.properties "$@"
+}
+
+mkdir -p out && cdoc2 decrypt --ssh-agent -f ssh.cdoc2 -o out
+```
+
+While the container runs, it can ask your agent to sign with any key the agent holds. Prefer a dedicated
+agent that holds only the cdoc2 key (`ssh-agent -a <socket>`, then `ssh-add` the key with that
+`SSH_AUTH_SOCK`), or add the key with `ssh-add -c`.
+
+To build the image locally, from the cdoc2-java-ref-impl directory:
+
+```
+mvn -pl cdoc2-cli -am package -DskipTests
+version=$(mvn -q -pl cdoc2-cli help:evaluate -Dexpression=project.version -DforceStdout)
+rm -rf cdoc2-cli/target/docker && mkdir cdoc2-cli/target/docker
+cp "cdoc2-cli/target/cdoc2-cli-$version.jar" cdoc2-cli/target/docker/cdoc2-cli.jar
+cp cdoc2-cli/docker/Dockerfile cdoc2-cli/target/docker/
+docker build -t ruhnu-cli:local cdoc2-cli/target/docker
+cdoc2-cli/docker/smoke-test.sh ruhnu-cli:local
+```
+
 
 ### Decryption
 To decrypt:

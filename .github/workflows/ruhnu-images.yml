@@ -1,0 +1,181 @@
+# Builds the ruhnu-cli image (cdoc2-cli for SSH public key recipients) for
+# linux/amd64 and linux/arm64 and publishes it to ghcr.io.
+#
+# Triggered by pushing a tag. The workflow file is read from the tagged commit,
+# so feature branches can be built before this file is on the default branch,
+# and upstream tags (which point to commits without this file) build nothing.
+#   v*    -> image tags <git tag> and latest
+#   dev-* -> image tag <git tag> only
+name: Build and publish ruhnu Docker images
+
+on:
+  push:
+    tags: [ 'v*', 'dev-*' ]
+
+env:
+  REGISTRY: ghcr.io
+  CLI_IMAGE: ghcr.io/${{ github.repository_owner }}/ruhnu-cli
+  # OCI image labels. ghcr.io shows the description on the package page; for
+  # multi-arch images it reads it from the index annotations.
+  CLI_DESCRIPTION: >-
+    cdoc2-cli for Ruhnu: encrypt secrets to SSH keys and decrypt them through
+    ssh-agent. Fork of open-eid/cdoc2-java-ref-impl.
+  OCI_SOURCE: ${{ github.server_url }}/${{ github.repository }}
+  OCI_DOCUMENTATION: https://github.com/ruhnu
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      latest: ${{ steps.tag.outputs.latest }}
+      created: ${{ steps.tag.outputs.created }}
+    steps:
+      - id: tag
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          # Docker tags allow only [A-Za-z0-9_.-]
+          echo "tag=${REF_NAME//[^A-Za-z0-9_.-]/-}" >> "$GITHUB_OUTPUT"
+          # one build time for all images, ISO 8601 instant
+          echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          if [[ "$REF_NAME" == v* ]]; then
+            echo "latest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "latest=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # The Dockerfile has no RUN steps and the jar is architecture independent,
+  # so buildx builds both platforms on one runner without emulation.
+  cli:
+    needs: meta
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          overwrite-settings: true # settings.xml with server id "github"
+          cache: maven
+
+      # cdoc2 dependencies are not published anywhere CI can reach; build them
+      # from the ruhnu forks at the refs pinned in .github/ruhnu-deps.env.
+      - name: Read sibling refs
+        id: deps
+        run: grep -E '^[A-Z0-9_]+=' .github/ruhnu-deps.env >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/cdoc2-openapi
+          ref: ${{ steps.deps.outputs.CDOC2_OPENAPI_REF }}
+          path: deps/cdoc2-openapi
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/cdoc2-auth
+          ref: ${{ steps.deps.outputs.CDOC2_AUTH_REF }}
+          path: deps/cdoc2-auth
+
+      # The refs are branch names, so record the commits actually built; they
+      # go into the image labels io.github.ruhnu.<repo>.revision.
+      - name: Record sibling commits
+        id: sibling_sha
+        run: |
+          echo "openapi=$(git -C deps/cdoc2-openapi rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "auth=$(git -C deps/cdoc2-auth rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # Static analysis is skipped: it belongs to the siblings' own CI.
+      - name: Build sibling dependencies
+        run: |
+          for d in deps/cdoc2-openapi deps/cdoc2-auth; do
+            mvn -B -f "$d" install -Dmaven.test.skip=true \
+              -Dspotbugs.skip=true -Dcheckstyle.skip=true
+          done
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      # -DskipTests, not -Dmaven.test.skip: cdoc2-cli depends on the cdoc2-lib
+      # test jar, which maven.test.skip doesn't build.
+      - name: Build cdoc2-cli
+        run: mvn -B -pl cdoc2-cli -am install -DskipTests
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      # Build context: the Dockerfile and the shaded jar under a fixed name.
+      - name: Stage image build context
+        run: |
+          version=$(mvn -B -q -pl cdoc2-cli help:evaluate -Dexpression=project.version -DforceStdout)
+          rm -rf cdoc2-cli/target/docker
+          mkdir cdoc2-cli/target/docker
+          cp "cdoc2-cli/target/cdoc2-cli-${version}.jar" cdoc2-cli/target/docker/cdoc2-cli.jar
+          cp cdoc2-cli/docker/Dockerfile cdoc2-cli/target/docker/
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Nothing is pushed unless the image passes the smoke test.
+      - name: Build image for the smoke test
+        uses: docker/build-push-action@v6
+        with:
+          context: cdoc2-cli/target/docker
+          platforms: linux/amd64
+          load: true
+          tags: ruhnu-cli:smoke-test
+
+      - name: Smoke test
+        run: cdoc2-cli/docker/smoke-test.sh ruhnu-cli:smoke-test
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Image tags
+        id: tags
+        env:
+          TAG: ${{ needs.meta.outputs.tag }}
+          LATEST: ${{ needs.meta.outputs.latest }}
+        run: |
+          {
+            echo "tags<<EOF"
+            echo "${CLI_IMAGE}:${TAG}"
+            if [[ "$LATEST" == true ]]; then echo "${CLI_IMAGE}:latest"; fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: cdoc2-cli/target/docker
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: |
+            org.opencontainers.image.title=ruhnu-cli
+            org.opencontainers.image.description=${{ env.CLI_DESCRIPTION }}
+            org.opencontainers.image.version=${{ needs.meta.outputs.tag }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ env.OCI_SOURCE }}
+            org.opencontainers.image.created=${{ needs.meta.outputs.created }}
+            org.opencontainers.image.documentation=${{ env.OCI_DOCUMENTATION }}
+            io.github.ruhnu.cdoc2-openapi.revision=${{ steps.sibling_sha.outputs.openapi }}
+            io.github.ruhnu.cdoc2-auth.revision=${{ steps.sibling_sha.outputs.auth }}
+          annotations: |
+            index:org.opencontainers.image.title=ruhnu-cli
+            index:org.opencontainers.image.description=${{ env.CLI_DESCRIPTION }}
+            index:org.opencontainers.image.version=${{ needs.meta.outputs.tag }}
+            index:org.opencontainers.image.revision=${{ github.sha }}
+            index:org.opencontainers.image.source=${{ env.OCI_SOURCE }}
+            index:org.opencontainers.image.created=${{ needs.meta.outputs.created }}
+            index:org.opencontainers.image.documentation=${{ env.OCI_DOCUMENTATION }}
+            index:io.github.ruhnu.cdoc2-openapi.revision=${{ steps.sibling_sha.outputs.openapi }}
+            index:io.github.ruhnu.cdoc2-auth.revision=${{ steps.sibling_sha.outputs.auth }}
