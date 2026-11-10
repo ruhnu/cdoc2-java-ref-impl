@@ -95,6 +95,13 @@ published for linux/amd64 and linux/arm64 when cdoc2-java-ref-impl is tagged: `v
 `:latest`, `dev-*` tags as `:<tag>`. It supports encrypting to SSH public keys and decrypting through your
 ssh-agent, as described above. Smart-ID, Mobile-ID and ID-card are not supported in the image.
 
+The examples below use `:latest`. To use an exact version, or while no `v*` release exists yet (and so no
+`:latest`), pick an available tag from the `ruhnu-cli` package, listed under "Packages" on
+https://github.com/ruhnu/cdoc2-java-ref-impl (directly:
+https://github.com/ruhnu/cdoc2-java-ref-impl/pkgs/container/ruhnu-cli), and use it in place of `latest`,
+for example `ghcr.io/ruhnu/ruhnu-cli:dev-cli-image-1`. With the `ruhnu` function below, set
+`RUHNU_CLI_IMAGE` to that image.
+
 The container sees only what you mount into it, and paths in arguments and in `key-shares.properties` are
 paths in the container:
 * `/work`: your files, for example the current directory
