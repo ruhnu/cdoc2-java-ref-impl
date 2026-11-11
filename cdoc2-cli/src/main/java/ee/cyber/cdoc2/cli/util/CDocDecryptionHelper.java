@@ -168,7 +168,8 @@ public final class CDocDecryptionHelper {
     /**
      * Find the first SSH public key ("ruhnu/pk/") or DID ("ruhnu/did/") recipient of the container, in container
      * order, whose key ssh-agent holds. SSH public key recipients match by key, DID recipients by key fingerprint;
-     * the DID is not resolved. Nothing is sent to shares servers if there is no match.
+     * the DID is not resolved. Nothing is sent to shares servers if there is no match. A malformed recipient is
+     * skipped with a warning.
      * @param cdocFile container
      * @param socket ssh-agent socket path, empty for $SSH_AUTH_SOCK
      */
@@ -181,7 +182,14 @@ public final class CDocDecryptionHelper {
                 && ksr.getRecipientType() == KeyShareRecipientType.RUHNU
                 && (ksr.getRecipientId().toString().startsWith(SshPublicKeyParser.RECIPIENT_ID_PREFIX)
                     || DidRecipientId.isDidRecipientId(ksr.getRecipientId().toString()))) {
-                sshRecipients.add(ksr.getRecipientId().toString());
+                String recipientId = ksr.getRecipientId().toString();
+                try {
+                    validateSshRecipient(recipientId);
+                    sshRecipients.add(recipientId);
+                } catch (InvalidSshPublicKeyException | InvalidDidRecipientException e) {
+                    // another recipient may still match
+                    System.err.println("WARNING: skipped invalid recipient " + recipientId + ": " + e.getMessage());
+                }
             }
         }
         if (sshRecipients.isEmpty()) {
@@ -224,8 +232,17 @@ public final class CDocDecryptionHelper {
             return recipientId.equals(SshPublicKeyParser.recipientIdFromBlob(identity.keyBlob()))
                 ? new SshPkDecryptionKeyMaterial(recipientId, agent)
                 : null;
-        } catch (InvalidSshPublicKeyException | InvalidDidRecipientException e) {
-            return null; // agent key type not supported (ed25519, rsa, ...) or malformed recipient
+        } catch (InvalidSshPublicKeyException e) {
+            return null; // agent key type not supported (ed25519, rsa, ...)
+        }
+    }
+
+    /** Throws if the "ruhnu/pk/" or "ruhnu/did/" recipient identifier is malformed */
+    private static void validateSshRecipient(String recipientId) {
+        if (DidRecipientId.isDidRecipientId(recipientId)) {
+            DidRecipientId.parse(recipientId);
+        } else {
+            SshPublicKeyParser.fromRecipientId(recipientId);
         }
     }
 

@@ -22,10 +22,20 @@ import org.junit.jupiter.api.extension.RegisterExtension;
 import org.junit.jupiter.api.io.TempDir;
 import picocli.CommandLine;
 
+import ee.cyber.cdoc2.CDocBuilder;
+import ee.cyber.cdoc2.auth.DidHostPolicy;
 import ee.cyber.cdoc2.auth.DidRecipientId;
+import ee.cyber.cdoc2.auth.DidWebResolver;
 import ee.cyber.cdoc2.auth.SshPublicKeyParser;
 import ee.cyber.cdoc2.cli.CDocCli;
+import ee.cyber.cdoc2.client.KeySharesClientFactory;
+import ee.cyber.cdoc2.crypto.EncryptionKeyOrigin;
+import ee.cyber.cdoc2.crypto.keymaterial.EncryptionKeyMaterial;
+import ee.cyber.cdoc2.crypto.keymaterial.encrypt.DidRecipients;
+import ee.cyber.cdoc2.crypto.keymaterial.encrypt.RuhnuEncryptionKeyMaterial;
+import ee.cyber.cdoc2.crypto.keymaterial.encrypt.SshDidEncryptionKeyMaterial;
 import ee.cyber.cdoc2.crypto.sshagent.TestSshAgent;
+import ee.cyber.cdoc2.services.Cdoc2Services;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.get;
@@ -69,6 +79,7 @@ class SshDidCliTest {
     private final ByteArrayOutputStream err = new ByteArrayOutputStream();
 
     private TestSshAgent agent;
+    private Path keySharesPropertiesFile;
     private String aliceLine;
     private String did;
     private String recipientId;
@@ -112,6 +123,7 @@ class SshDidCliTest {
             "cdoc2.key-shares.client.ssl.trust-store=classpath:clienttruststore.jks",
             "cdoc2.key-shares.client.ssl.trust-store.type=JKS",
             "cdoc2.key-shares.client.ssl.trust-store-password=passwd"));
+        keySharesPropertiesFile = props;
         keySharesProperties = "-Dkey-shares.properties=" + props;
 
         stubCreateShares(server1, "ss1");
@@ -194,6 +206,7 @@ class SshDidCliTest {
 
     @Test
     void shouldFailReadablyBeforeUploadWhenDidUnusable() throws Exception {
+        // with an SSH public key recipient too, whose shares would be uploaded if the container were built
         // only an unsupported key
         serveDidDocument(didDocument(did, List.of(), List.of(ED25519_METHOD_JWK)));
         assertCreateFails(did, "ERROR: " + did + " lists no supported key");
@@ -207,10 +220,6 @@ class SshDidCliTest {
         assertCreateFails("did:key:zDnaeXyz", "ERROR: Only did:web DIDs are supported");
         assertCreateFails("did:web:192.0.2.1", "is not a valid did:web DID");
         assertCreateFails("did:web:example.org:p:" + "a".repeat(200), "DID is too long");
-
-        for (WireMockExtension server : List.of(server1, server2)) {
-            assertEquals(0, server.findAll(postRequestedFor(urlEqualTo("/key-shares"))).size());
-        }
     }
 
     @Test
@@ -223,8 +232,8 @@ class SshDidCliTest {
             payload.toString()));
 
         String error = err.toString();
-        assertTrue(error.contains("refused to save key share: HTTP 400; the DID host may not be allowed there"),
-            error);
+        assertTrue(error.contains("refused to save key share: HTTP 400; possible cause, for a --did recipient: "
+            + "the shares server does not allow the DID host"), error);
         assertFalse(error.contains("\tat "), "stack trace printed: " + error);
     }
 
@@ -293,6 +302,65 @@ class SshDidCliTest {
     }
 
     @Test
+    void shouldReportExpiredOrDeletedShareReadably() throws Exception {
+        createContainer();
+        for (WireMockExtension server : List.of(server1, server2)) {
+            server.stubFor(post(urlPathMatching("/key-shares/.*/nonce")).willReturn(aResponse().withStatus(404)));
+        }
+
+        assertEquals(1, run("decrypt", "-f", cdocFile.toString(), "--ssh-agent-socket=" + agent.socket(),
+            "-o", tempDir.toString(), keySharesProperties));
+
+        String error = err.toString();
+        assertTrue(error.matches("(?s).*ERROR: Shares server https://localhost:\\d+ refused share ID ss\\w+: "
+            + "the share was not found, has expired or was deleted.*"), error);
+        assertFalse(error.contains("\tat "), "stack trace printed: " + error);
+        assertFalse(error.contains("Exception"), "exception printed: " + error);
+    }
+
+    @Test
+    void shouldWarnAboutMalformedRecipientAndDecryptWithAnother() throws Exception {
+        String malformed = "ruhnu/did/did:key:zDnaeXyz/hash/" + DidRecipientId.parse(recipientId).fingerprint();
+        serveDidDocument(didDocument(did, List.of(aliceLine), List.of()));
+        SshDidEncryptionKeyMaterial alice = DidRecipients.resolve(did, null, DidWebResolver.createDefault(
+            DidWebResolver.DEFAULT_CONNECT_TIMEOUT, DidWebResolver.DEFAULT_DEADLINE, DidHostPolicy.ALLOW_ALL))
+            .keyMaterials().get(0);
+        // the library refuses to create a malformed recipient, so write one through the interface; it comes first
+        System.setProperty("key-shares.properties", keySharesPropertiesFile.toString());
+        new CDocBuilder()
+            .withPayloadFiles(List.of(payload.toFile()))
+            .withRecipients(List.<EncryptionKeyMaterial>of(new MalformedRecipient(malformed, alice.keyLabel()), alice))
+            .withKeyShares(Cdoc2Services.initFromSystemProperties().get(KeySharesClientFactory.class))
+            .buildToFile(cdocFile.toFile());
+        stubNonceAndGetShares();
+
+        Path outDir = Files.createDirectories(tempDir.resolve("out"));
+        assertEquals(0, run("decrypt", "-f", cdocFile.toString(), "--ssh-agent-socket=" + agent.socket(),
+            "-o", outDir.toString(), keySharesProperties), err.toString());
+
+        assertEquals("secret payload", Files.readString(outDir.resolve("payload.txt")));
+        assertTrue(err.toString().contains("WARNING: skipped invalid recipient " + malformed), err.toString());
+    }
+
+    /** "ruhnu/" key material without the validation of SshPkEncryptionKeyMaterial or SshDidEncryptionKeyMaterial */
+    private record MalformedRecipient(String recipientId, String keyLabel) implements RuhnuEncryptionKeyMaterial {
+        @Override
+        public Duration shareLifetime() {
+            return null;
+        }
+
+        @Override
+        public String getLabel() {
+            return keyLabel;
+        }
+
+        @Override
+        public EncryptionKeyOrigin getKeyOrigin() {
+            return EncryptionKeyOrigin.KEY_SHARE;
+        }
+    }
+
+    @Test
     void shouldReportUnavailableDidHostReadably() throws Exception {
         createContainer();
         stubNonces();
@@ -341,10 +409,13 @@ class SshDidCliTest {
 
     private void assertCreateFails(String forDid, String expectedError) {
         err.reset();
-        assertEquals(1, run("create", "-f", cdocFile.toString(), "--did", forDid, keySharesProperties,
-            payload.toString()));
+        assertEquals(1, run("create", "-f", cdocFile.toString(), "--ssh-pubkey", aliceLine, "--did", forDid,
+            keySharesProperties, payload.toString()));
         assertTrue(err.toString().contains(expectedError), err.toString());
         assertFalse(err.toString().contains("\tat "), "stack trace printed: " + err);
+        for (WireMockExtension server : List.of(server1, server2)) {
+            assertEquals(0, server.findAll(postRequestedFor(urlEqualTo("/key-shares"))).size(), "uploaded");
+        }
     }
 
     private int run(String... args) {

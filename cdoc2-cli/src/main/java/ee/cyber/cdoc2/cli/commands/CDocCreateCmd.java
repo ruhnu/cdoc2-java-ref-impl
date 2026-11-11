@@ -169,9 +169,10 @@ public class CDocCreateCmd implements Callable<Integer> {
         } catch (Exception e) {
             ExtApiException apiException = findCause(e, ExtApiException.class);
             if (isWithDid() && apiException != null && apiException.httpStatus().orElse(0) == HTTP_BAD_REQUEST) {
-                // the shares server's cdoc2.ruhnu.did.allowed-hosts may not contain the DID host
+                // a hint only: the 400 may also be for another recipient, or have another cause. The shares
+                // server's cdoc2.ruhnu.did.allowed-hosts may not contain the DID host
                 System.err.println("ERROR: " + apiException.getMessage()
-                    + "; the DID host may not be allowed there");
+                    + "; possible cause, for a --did recipient: the shares server does not allow the DID host");
                 return 1;
             }
             throw e;
