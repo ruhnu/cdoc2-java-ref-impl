@@ -96,8 +96,9 @@ public class CDocDecryptCmd implements Callable<Integer> {
             decrypt();
             return 0;
         } catch (Exception e) {
-            // readable errors instead of a stack trace: no agent, key not in agent, agent refused, and DID
-            // recipient shares refused (404) or the DID host unavailable (503)
+            // readable errors instead of a stack trace: no agent, key not in agent, agent refused, a share that
+            // was not found, has expired or was deleted (nonce 404), DID recipient shares refused (404) and the DID
+            // host unavailable (503)
             SshAgentException agentException = findCause(e, SshAgentException.class);
             if (agentException != null) {
                 System.err.println("ERROR: " + agentException.getMessage());
