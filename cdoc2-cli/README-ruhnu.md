@@ -84,6 +84,7 @@ Errors are reported without a stack trace, with exit code 1:
 | `No matching key found in ssh-agent`        | the agent doesn't hold any of the container's SSH keys (fingerprints listed); nothing is sent to the shares servers |
 | `ssh-agent refused to sign`                 | the agent declined, for example the `ssh-add -c` confirmation was refused   |
 | `Invalid SSH public key: ... not supported` | `create` with a key type other than `ecdsa-sha2-nistp256`                   |
+| `... refused share ID ...: the share was not found, has expired or was deleted` | `decrypt`: a shares server no longer has the share (404) |
 
 Security notes:
 * Anyone who can use your agent can decrypt: a forwarded agent (`ssh -A`) can be used by root on the remote
@@ -105,7 +106,8 @@ Requirements, in addition to those for SSH public keys:
 * every configured shares server allows the DID host (`cdoc2.ruhnu.did.allowed-hosts`, see the
   cdoc2-shares-server admin guide) and can reach it over HTTPS
 * the DID host's TLS certificate is trusted by the JVM (for a private CA, `-Djavax.net.ssl.trustStore=...`)
-* the shares servers keep DID recipient shares for their global lifetime (by default up to 3 years)
+* the shares servers keep DID recipient shares for their global lifetime: 3 years by default, at most 5 years
+  (`--share-expiry` requests another lifetime, up to that maximum)
 
 A DID document listing the key, in `publicKeyJwk` form (`kty` `EC`, `crv` `P-256`):
 
@@ -154,8 +156,8 @@ Errors, in addition to those for SSH public keys:
 | `The DID document of ... was not found`                               | `create`: the DID host answered, but not with this DID's document         |
 | `The DID host of ... could not be reached`                            | `create`: connection failure, timeout, TLS failure or HTTP 5xx/429        |
 | `... lists no supported key`                                          | `create`: no ECDSA P-256 `publicKeyJwk` key under `authentication`        |
-| `refused to save key share: HTTP 400; the DID host may not be allowed there` | `create`: a shares server doesn't allow the DID host               |
-| `... the key is no longer listed in the DID document of ...`          | `decrypt`: a shares server refused the share (404): revoked, expired or deleted |
+| `refused to save key share: HTTP 400; possible cause, for a --did recipient: ...` | `create`: a shares server refused the share, for example because it doesn't allow the DID host |
+| `... the key is no longer listed in the DID document of ...`          | `decrypt`: a shares server refused the share (404), usually because the key was removed from the DID document (revoked) |
 | `... could not reach the DID host of ...; try again later`            | `decrypt`: a shares server couldn't fetch the DID document (503)          |
 
 ## Docker image (SSH key recipients)

@@ -13,9 +13,27 @@
   `--share-expiry <duration>` (positive; a warning names each shares server that shortened it),
   `decrypt --ssh-agent` or `decrypt --ssh-agent-socket <socket>`; `info` shows SSH recipients.
   ssh-agent and invalid SSH key errors are printed without stack trace (exit code 1)
+* DID recipients through key shares: the ECDSA P-256 keys a `did:web` DID document lists under
+  `authentication`, one `RUHNU` recipient per key with `recipient_id`
+  `ruhnu/did/<did>/hash/<base64url SHA-256 of the OpenSSH public key blob>`:
+  * encrypt with `DidRecipients.resolve(did, shareLifetime, resolver)`, which pins every listed key and
+    reports skipped ones; it fails before anything is uploaded if the DID is invalid, not found, its host
+    unreachable or no key is supported
+  * decrypt with `DecryptionKeyMaterial.fromSshAgentDidKey(recipientId, keyBlob)`: the agent-signed auth token
+    carries the public key as JWS `jwk` header; the shares servers release a share only while the DID document
+    still lists the key
+  * `KeyShareAccessException` when a shares server refuses a `ruhnu/` share: not found, expired or deleted, or
+    the key no longer listed in the DID document (HTTP 404), or the DID host unreachable (HTTP 503,
+    `isRetryable()`)
+* cdoc2-cli: `create --did <did:web DID>` (repeatable) prints each pinned recipient and fingerprint and warns
+  about skipped keys, `--share-expiry` applies to DID recipients too; `decrypt --ssh-agent` also matches DID
+  recipients by key fingerprint, without resolving the DID; `info` shows "SSH key via DID" recipients. DID and
+  share refusal errors are printed without stack trace (exit code 1)
 * Key shares recipient type is now read from the container (was always Smart-ID/Mobile-ID)
-* Key shares client: session headers optional (key-shares API 1.4.0-draft),
+* Key shares client: session headers optional (key-shares API 1.5.0-draft), HTTP status of failed requests
+  available through `ExtApiException.httpStatus()`,
   `KeySharesClient.storeKeyShare(KeyShare, OffsetDateTime)` requests an expiry time
+* cdoc2-auth-token 0.9.0-SNAPSHOT
 
 ### Maven package versions:
 ```

@@ -588,7 +588,8 @@ SSH recipients can be listed with `Envelope.parseHeader()`: they are `KeySharesR
 `KeyShareRecipientType.RUHNU`, whose `getRecipientId()` starts with `ruhnu/pk/`.
 
 Agent problems are reported as `SshAgentException` with a `getReason()`: `NO_AUTH_SOCK`, `CONNECTION_FAILED`,
-`KEY_NOT_FOUND` or `AGENT_REFUSED` (for example, the user declined an `ssh-add -c` confirmation).
+`KEY_NOT_FOUND` or `AGENT_REFUSED` (for example, the user declined an `ssh-add -c` confirmation). A shares server
+that no longer has the share (it has expired or was deleted) is reported as `KeyShareAccessException`.
 
 
 ## DID recipients (ssh-agent)

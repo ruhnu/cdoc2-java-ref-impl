@@ -252,7 +252,10 @@ for the DID host (`cdoc2.ruhnu.enabled=true`, `cdoc2.ruhnu.did.allowed-hosts`).
    public key blob: the `ssh-keygen -l` fingerprint with `+/` replaced by `-_`. The DID host is trusted at this
    moment; the sender sees the pinned fingerprints.
 2. *Follow steps 2-6 of the SSH public key scenario*, with `ruhnu/did/<did>/hash/<fingerprint>` as recipient.
-   Shares servers refuse shares for DID hosts they don't allow.
+   Shares servers refuse shares for DID hosts they don't allow. DID shares don't get the 14-day SSH key
+   default of step 3: the shares server's global lifetime applies (`key-share.default-expiration-duration`,
+   by default `P1095D`, 3 years; a requested `x-expiry-time` is capped at `key-share.max-expiration-duration`,
+   by default `P1825D`, 5 years).
 3. Recipient finds `KeySharesCapsule` records with `recipient_type` `RUHNU` and `recipient_id` starting with
    `ruhnu/did/`, and checks that `ssh-agent` holds a key with that fingerprint. The recipient doesn't resolve the
    DID.
