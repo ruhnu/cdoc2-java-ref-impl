@@ -13,7 +13,8 @@ import ee.cyber.cdoc2.crypto.EncryptionKeyOrigin;
  * @param recipientId   "ruhnu/did/&lt;did&gt;/hash/&lt;fingerprint&gt;", stored as share recipient and
  *                      KeySharesCapsule recipient_id
  * @param keyLabel      formatted key label
- * @param shareLifetime requested key share lifetime (x-expiry-time), {@code null} for server default
+ * @param shareLifetime requested key share lifetime (x-expiry-time), {@code null} for server default.
+ *                      Must be positive
  */
 public record SshDidEncryptionKeyMaterial(
     String recipientId,
@@ -23,6 +24,10 @@ public record SshDidEncryptionKeyMaterial(
 
     public SshDidEncryptionKeyMaterial {
         DidRecipientId.parse(recipientId); // validate
+        if (shareLifetime != null && (shareLifetime.isZero() || shareLifetime.isNegative())) {
+            // the shares would have expired already, and the container could never be decrypted
+            throw new IllegalArgumentException("Key share lifetime must be positive, was " + shareLifetime);
+        }
     }
 
     /**

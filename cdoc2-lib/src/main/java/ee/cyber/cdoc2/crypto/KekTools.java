@@ -79,6 +79,7 @@ import ee.cyber.cdoc2.services.Services;
 public final class KekTools {
 
     private static final Logger log = LoggerFactory.getLogger(KekTools.class);
+    private static final int HTTP_NOT_FOUND = 404;
     private static final int HTTP_SERVICE_UNAVAILABLE = 503;
     private static final String MUST_CONTAIN_RSA_KEY_PAIR_FOR_RSA_SCENARIO =
         "must contain RSA key pair for RSA scenario";
@@ -369,6 +370,7 @@ public final class KekTools {
      *                               otherwise $SSH_AUTH_SOCK is used
      * @return KEK
      * @throws SshAgentException if ssh-agent is not available, does not hold the key or refuses to sign
+     * @throws KeyShareAccessException if a shares server has no such share (nonce request 404: expired or deleted)
      */
     public static byte[] deriveKekFromSshPkShares(
         KeySharesRecipient keySharesRecipient,
@@ -409,7 +411,8 @@ public final class KekTools {
      *                               otherwise $SSH_AUTH_SOCK is used
      * @return KEK
      * @throws SshAgentException if ssh-agent is not available, does not hold the key or refuses to sign
-     * @throws KeyShareAccessException if a shares server refuses the share (404) or cannot reach the DID host (503)
+     * @throws KeyShareAccessException if a shares server has no such share (nonce request 404: expired or deleted),
+     *                                 refuses the share (404) or cannot reach the DID host (503)
      */
     public static byte[] deriveKekFromSshDidShares(
         KeySharesRecipient keySharesRecipient,
@@ -476,12 +479,14 @@ public final class KekTools {
                 String nonce = client.createKeyShareNonce(share.shareId(), null, null).getNonce();
                 accessData.add(new ShareAccessData(share.serverBaseUrl(), share.shareId(), nonce));
             } catch (ApiException e) {
-                String reason = (e.getCode() == 404)
-                    ? "share not found (expired or deleted)"
-                    : "HTTP " + e.getCode();
+                if (e.getCode() == HTTP_NOT_FOUND) {
+                    throw new KeyShareAccessException(String.format(
+                        "Shares server %s refused share ID %s: the share was not found, has expired or was deleted",
+                        share.serverBaseUrl(), share.shareId()), false, e);
+                }
                 throw new GeneralSecurityException(String.format(
-                    "Shares server %s refused nonce for share ID %s: %s",
-                    share.serverBaseUrl(), share.shareId(), reason), e);
+                    "Shares server %s refused nonce for share ID %s: HTTP %d",
+                    share.serverBaseUrl(), share.shareId(), e.getCode()), e);
             }
         }
 

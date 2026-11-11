@@ -47,6 +47,7 @@ import ee.cyber.cdoc2.crypto.sshagent.SshAgentClient;
 import ee.cyber.cdoc2.crypto.sshagent.SshAgentException;
 import ee.cyber.cdoc2.crypto.sshagent.TestSshAgent;
 import ee.cyber.cdoc2.exceptions.CDocException;
+import ee.cyber.cdoc2.exceptions.KeyShareAccessException;
 import ee.cyber.cdoc2.fbs.recipients.KeyShareRecipientType;
 import ee.cyber.cdoc2.services.Services;
 import ee.cyber.cdoc2.services.ServicesBuilder;
@@ -241,6 +242,22 @@ class SshPkKeySharesTest {
             assertEquals(0, server.findAll(postRequestedFor(urlPathMatching("/key-shares/.*/nonce"))).size());
             assertEquals(0, server.findAll(getRequestedFor(urlPathMatching("/key-shares/[^/]+"))).size());
         }
+    }
+
+    @Test
+    void shouldReportExpiredOrDeletedShare() throws Exception {
+        byte[] cdoc = encrypt(EncryptionKeyMaterial.fromSshPublicKey(publicKeyLine, null));
+        // the order in which the nonces are requested is not fixed, so both servers no longer have the share
+        for (WireMockExtension server : List.of(server1, server2)) {
+            server.stubFor(post(urlPathMatching("/key-shares/.*/nonce")).willReturn(aResponse().withStatus(404)));
+        }
+
+        Path outDir = Files.createDirectories(tempDir.resolve("out"));
+        var ex = assertThrows(KeyShareAccessException.class, () -> Envelope.decrypt(new ByteArrayInputStream(cdoc),
+            DecryptionKeyMaterial.fromSshAgentKey(recipientId), outDir, services(agent.client())));
+
+        assertFalse(ex.isRetryable());
+        assertTrue(ex.getMessage().contains("the share was not found, has expired or was deleted"), ex.getMessage());
     }
 
     @Test

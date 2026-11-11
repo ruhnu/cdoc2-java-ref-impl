@@ -49,6 +49,7 @@ import ee.cyber.cdoc2.config.KeySharesConfiguration;
 import ee.cyber.cdoc2.config.PropertiesLoader;
 import ee.cyber.cdoc2.container.recipients.KeySharesRecipient;
 import ee.cyber.cdoc2.container.recipients.Recipient;
+import ee.cyber.cdoc2.crypto.KeyShareUri;
 import ee.cyber.cdoc2.crypto.keymaterial.DecryptionKeyMaterial;
 import ee.cyber.cdoc2.crypto.keymaterial.EncryptionKeyMaterial;
 import ee.cyber.cdoc2.crypto.keymaterial.decrypt.SshDidDecryptionKeyMaterial;
@@ -259,6 +260,26 @@ class SshDidKeySharesTest {
         for (WireMockExtension server : List.of(server1, server2)) {
             assertEquals(0, server.findAll(postRequestedFor(urlEqualTo("/key-shares"))).size());
         }
+
+        // the same resolve-then-encrypt flow does upload to these servers once the DID is usable
+        encryptToAlice();
+        for (WireMockExtension server : List.of(server1, server2)) {
+            assertEquals(1, server.findAll(postRequestedFor(urlEqualTo("/key-shares"))).size());
+        }
+    }
+
+    @Test
+    void shouldRefuseNonPositiveShareLifetime() {
+        serveDidDocument(didDocument(did, aliceKeyLine));
+        for (Duration lifetime : List.of(Duration.ZERO, Duration.ofDays(-1))) {
+            assertThrows(IllegalArgumentException.class,
+                () -> new SshDidEncryptionKeyMaterial(recipientId, "label", lifetime), lifetime.toString());
+            var ex = assertThrows(IllegalArgumentException.class,
+                () -> DidRecipients.resolve(did, lifetime, resolver), lifetime.toString());
+            assertTrue(ex.getMessage().contains("lifetime must be positive"), ex.getMessage());
+        }
+        // refused before the DID host is contacted
+        assertEquals(0, didHost.getAllServeEvents().size());
     }
 
     @Test
@@ -293,6 +314,22 @@ class SshDidKeySharesTest {
         assertFalse(ex.isRetryable());
         assertTrue(ex.getMessage().contains("not found, has expired, or the key is no longer listed in the DID "
             + "document of " + did), ex.getMessage());
+    }
+
+    @Test
+    void shouldReportExpiredOrDeletedShare() throws Exception {
+        byte[] cdoc = encryptToAlice();
+        // the order in which the nonces are requested is not fixed, so both servers no longer have the share
+        server1.stubFor(post(urlEqualTo("/key-shares/" + SHARE_ID_1 + "/nonce"))
+            .willReturn(aResponse().withStatus(404)));
+        server2.stubFor(post(urlEqualTo("/key-shares/" + SHARE_ID_2 + "/nonce"))
+            .willReturn(aResponse().withStatus(404)));
+
+        var ex = assertThrows(KeyShareAccessException.class, () -> decrypt(cdoc, agent.client()));
+
+        assertFalse(ex.isRetryable());
+        assertTrue(ex.getMessage().matches("Shares server https://localhost:\\d+ refused share ID ss\\w+: "
+            + "the share was not found, has expired or was deleted"), ex.getMessage());
     }
 
     @Test
@@ -355,15 +392,27 @@ class SshDidKeySharesTest {
     @Test
     void shouldRefuseMalformedDidRecipientBeforeAnyRequest() throws Exception {
         String malformed = "ruhnu/did/did:key:zDnaeXyz/hash/" + DidRecipientId.parse(recipientId).fingerprint();
+        // shares on both servers, so that a request for them would be seen
         KeySharesRecipient recipient = new KeySharesRecipient(new byte[32], "label", malformed,
-            List.of(), new byte[32], KeyShareRecipientType.RUHNU);
+            List.of(new KeyShareUri("https://localhost:" + server1.getHttpsPort(), SHARE_ID_1),
+                new KeyShareUri("https://localhost:" + server2.getHttpsPort(), SHARE_ID_2)),
+            new byte[32], KeyShareRecipientType.RUHNU);
+        // key material for the malformed identifier (the constructor refuses it), with a key the agent holds
+        DecryptionKeyMaterial keyMaterial =
+            new SshDidDecryptionKeyMaterial(recipientId, blob(aliceKeyLine), agent.client()) {
+                @Override
+                public Object getRecipientId() {
+                    return malformed;
+                }
+            };
+        stubNonce(server1, SHARE_ID_1);
+        stubNonce(server2, SHARE_ID_2);
 
-        var ex = assertThrows(CDocException.class, () -> recipient.deriveKek(
-            DecryptionKeyMaterial.fromSshAgentDidKey(recipientId, blob(aliceKeyLine)), services(agent.client())));
+        var ex = assertThrows(CDocException.class, () -> recipient.deriveKek(keyMaterial, services(agent.client())));
 
-        assertTrue(ex.getMessage().contains("Invalid recipient identifier"), ex.getMessage());
         assertEquals(0, server1.getAllServeEvents().size());
         assertEquals(0, server2.getAllServeEvents().size());
+        assertTrue(ex.getMessage().contains("Invalid recipient identifier"), ex.getMessage());
     }
 
     @Test

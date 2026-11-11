@@ -47,16 +47,22 @@ public final class DidRecipients {
     /**
      * Resolve a DID and create one DID recipient key material per key its document lists.
      * @param did           did:web DID
-     * @param shareLifetime requested key share lifetime, {@code null} for the shares server default
+     * @param shareLifetime requested key share lifetime, {@code null} for the shares server default. Must be
+     *                      positive
      * @param resolver      DID resolver, for example
      *                      {@code DidWebResolver.createDefault(DEFAULT_CONNECT_TIMEOUT, DEFAULT_DEADLINE, ALLOW_ALL)}
      * @return pinned keys
      * @throws DidRecipientException if the DID is invalid, not found, its host unavailable, or no key is supported
+     * @throws IllegalArgumentException if shareLifetime is zero or negative
      */
     public static Resolved resolve(String did, @Nullable Duration shareLifetime, DidWebResolver resolver)
         throws DidRecipientException {
         Objects.requireNonNull(did);
         Objects.requireNonNull(resolver);
+        if (shareLifetime != null && (shareLifetime.isZero() || shareLifetime.isNegative())) {
+            // checked before the DID host is contacted; SshDidEncryptionKeyMaterial checks it too
+            throw new IllegalArgumentException("Key share lifetime must be positive, was " + shareLifetime);
+        }
 
         DidWeb didWeb;
         try {

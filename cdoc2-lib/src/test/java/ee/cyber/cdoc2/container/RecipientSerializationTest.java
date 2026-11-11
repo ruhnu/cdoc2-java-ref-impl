@@ -103,4 +103,31 @@ class RecipientSerializationTest {
         Assertions.assertInstanceOf(KeySharesRecipient.class, recipient);
     }
 
+    @Test
+    void shouldRoundTripRuhnuDidRecipientThroughHeader() throws Exception {
+        String recipientId = "ruhnu/did/did:web:example.org%3A8443:p:alice/hash/"
+            + "ILaep1_NfsYICEypSkuVoSj0tD6P-nvxnABaRhsg-uc";
+        List<KeyShareUri> shares = List.of(
+            new KeyShareUri("https://shares1.example.org", "ss01020304050607080910111213141516"),
+            new KeyShareUri("https://shares2.example.org", "ss16151413121110090807060504030201"));
+        KeySharesRecipient written = new KeySharesRecipient(new byte[Crypto.FMK_LEN_BYTES], "formattedKeyLabel",
+            recipientId, shares, Crypto.generateSaltForKey(), KeyShareRecipientType.RUHNU);
+
+        Header header = Envelope.deserializeFBSHeader(Envelope.serializeHeader(new Recipient[] {written}));
+
+        Assertions.assertEquals(1, header.recipientsLength());
+        RecipientRecord recipientRecord = header.recipients(0);
+        Assertions.assertEquals(recipients_KeySharesCapsule, recipientRecord.capsuleType());
+        KeySharesCapsule sharesCapsule = (KeySharesCapsule) recipientRecord.capsule(new KeySharesCapsule());
+        Assertions.assertEquals(KeyShareRecipientType.RUHNU, sharesCapsule.recipientType());
+        Assertions.assertEquals(recipientId, sharesCapsule.recipientId());
+
+        KeySharesRecipient read = Assertions.assertInstanceOf(KeySharesRecipient.class,
+            RecipientDeserializer.deserialize(recipientRecord));
+        Assertions.assertEquals(KeyShareRecipientType.RUHNU, read.getRecipientType());
+        Assertions.assertEquals(recipientId, read.getRecipientId());
+        Assertions.assertEquals(shares, read.getKeyShares());
+        Assertions.assertEquals(written, read);
+    }
+
 }
