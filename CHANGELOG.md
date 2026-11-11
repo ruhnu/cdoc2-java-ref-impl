@@ -10,7 +10,8 @@
     ES256) is signed by ssh-agent (`$SSH_AUTH_SOCK`), no auth server, RP server or session token
   * `SshAgentClient` and `SshAgentJWSSigner` (ssh-agent over Unix domain socket)
 * cdoc2-cli: `create --ssh-pubkey <file.pub | OpenSSH key line>` (repeatable) and
-  `--share-expiry <duration>`, `decrypt --ssh-agent[=<socket>]`; `info` shows SSH recipients.
+  `--share-expiry <duration>` (positive; a warning names each shares server that shortened it),
+  `decrypt --ssh-agent` or `decrypt --ssh-agent-socket <socket>`; `info` shows SSH recipients.
   ssh-agent and invalid SSH key errors are printed without stack trace (exit code 1)
 * Key shares recipient type is now read from the container (was always Smart-ID/Mobile-ID)
 * Key shares client: session headers optional (key-shares API 1.4.0-draft),

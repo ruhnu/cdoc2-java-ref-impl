@@ -152,7 +152,7 @@ class SshDidCliTest {
 
         stubNonceAndGetShares();
         Path outDir = Files.createDirectories(tempDir.resolve("out"));
-        assertEquals(0, run("decrypt", "-f", cdocFile.toString(), "--ssh-agent=" + agent.socket(),
+        assertEquals(0, run("decrypt", "-f", cdocFile.toString(), "--ssh-agent-socket=" + agent.socket(),
             "-o", outDir.toString(), keySharesProperties), err.toString());
 
         assertEquals("secret payload", Files.readString(outDir.resolve("payload.txt")));
@@ -243,7 +243,7 @@ class SshDidCliTest {
         stubNonceAndGetShares();
 
         Path outDir = Files.createDirectories(tempDir.resolve("out"));
-        assertEquals(0, run("decrypt", "-f", cdocFile.toString(), "--ssh-agent=" + agent.socket(),
+        assertEquals(0, run("decrypt", "-f", cdocFile.toString(), "--ssh-agent-socket=" + agent.socket(),
             "-o", outDir.toString(), keySharesProperties), err.toString());
 
         assertEquals("secret payload", Files.readString(outDir.resolve("payload.txt")));
@@ -262,7 +262,7 @@ class SshDidCliTest {
             other.generateKey("other", "ecdsa");
             other.addKey("other", false);
 
-            assertEquals(1, run("decrypt", "-f", cdocFile.toString(), "--ssh-agent=" + other.socket(),
+            assertEquals(1, run("decrypt", "-f", cdocFile.toString(), "--ssh-agent-socket=" + other.socket(),
                 "-o", tempDir.toString(), keySharesProperties));
         }
 
@@ -282,7 +282,7 @@ class SshDidCliTest {
         server1.stubFor(get(urlPathMatching("/key-shares/[^/]+")).willReturn(aResponse().withStatus(404)));
         server2.stubFor(get(urlPathMatching("/key-shares/[^/]+")).willReturn(aResponse().withStatus(404)));
 
-        assertEquals(1, run("decrypt", "-f", cdocFile.toString(), "--ssh-agent=" + agent.socket(),
+        assertEquals(1, run("decrypt", "-f", cdocFile.toString(), "--ssh-agent-socket=" + agent.socket(),
             "-o", tempDir.toString(), keySharesProperties));
 
         String error = err.toString();
@@ -299,7 +299,7 @@ class SshDidCliTest {
         server1.stubFor(get(urlPathMatching("/key-shares/[^/]+")).willReturn(aResponse().withStatus(503)));
         server2.stubFor(get(urlPathMatching("/key-shares/[^/]+")).willReturn(aResponse().withStatus(503)));
 
-        assertEquals(1, run("decrypt", "-f", cdocFile.toString(), "--ssh-agent=" + agent.socket(),
+        assertEquals(1, run("decrypt", "-f", cdocFile.toString(), "--ssh-agent-socket=" + agent.socket(),
             "-o", tempDir.toString(), keySharesProperties));
 
         String error = err.toString();
@@ -312,7 +312,7 @@ class SshDidCliTest {
         createContainer();
         stubNonceAndGetShares();
 
-        assertEquals(1, run("decrypt", "-f", cdocFile.toString(), "--ssh-agent=" + tempDir.resolve("none.sock"),
+        assertEquals(1, run("decrypt", "-f", cdocFile.toString(), "--ssh-agent-socket=" + tempDir.resolve("none.sock"),
             "-o", tempDir.toString(), keySharesProperties));
         assertTrue(err.toString().contains("ERROR: ssh-agent is not available"), err.toString());
         assertEquals(0, server1.findAll(postRequestedFor(urlPathMatching("/key-shares/.*/nonce"))).size());
@@ -323,7 +323,7 @@ class SshDidCliTest {
             Files.copy(agent.keyFile("alice"), refusingDir.resolve("alice"));
             refusing.addKey("alice", true); // ssh-add -c, confirmation declined
 
-            assertEquals(1, run("decrypt", "-f", cdocFile.toString(), "--ssh-agent=" + refusing.socket(),
+            assertEquals(1, run("decrypt", "-f", cdocFile.toString(), "--ssh-agent-socket=" + refusing.socket(),
                 "-o", tempDir.toString(), keySharesProperties));
         }
         assertTrue(err.toString().contains("ERROR: ssh-agent refused to sign"), err.toString());

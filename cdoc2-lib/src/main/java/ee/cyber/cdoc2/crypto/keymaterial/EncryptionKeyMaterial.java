@@ -197,7 +197,12 @@ public interface EncryptionKeyMaterial {
         Path publicKeyFile,
         @Nullable Duration shareLifetime
     ) throws IOException {
-        return fromSshPublicKey(Files.readString(publicKeyFile, StandardCharsets.US_ASCII), shareLifetime);
+        // Read as ISO-8859-1, not US-ASCII or UTF-8. Those two throw MalformedInputException on a byte
+        // they cannot decode, so a key comment such as "jüri@sülearvuti" would make the whole file
+        // unreadable. ISO-8859-1 maps every byte to a character and never throws. The key type and the
+        // base64 key are ASCII and decode the same in all three; the comment may decode to the wrong
+        // characters, which does not matter because it is ignored.
+        return fromSshPublicKey(Files.readString(publicKeyFile, StandardCharsets.ISO_8859_1), shareLifetime);
     }
 
     static EncryptionKeyMaterialCollectionBuilder collectionBuilder() {
