@@ -164,6 +164,19 @@ class SshPkCliTest {
     }
 
     @Test
+    void shouldCreateWithNonAsciiCommentInKeyFile() throws Exception {
+        String[] fields = Files.readString(pubKeyFile).strip().split(" ");
+        Path pub = tempDir.resolve("comment.pub");
+        Files.writeString(pub, fields[0] + " " + fields[1] + " jüri@sülearvuti\n");
+
+        assertEquals(0, run("create", "-f", cdocFile.toString(), "--ssh-pubkey", pub.toString(),
+            keySharesProperties, payload.toString()), err.toString());
+
+        LoggedRequest create = server1.findAll(postRequestedFor(urlEqualTo("/key-shares"))).get(0);
+        assertTrue(create.getBodyAsString().contains(recipientId.substring(9, 40)), create.getBodyAsString());
+    }
+
+    @Test
     void shouldRejectUnsupportedKeyReadably() throws Exception {
         String ed25519 = agent.generateKey("ed", "ed25519");
 

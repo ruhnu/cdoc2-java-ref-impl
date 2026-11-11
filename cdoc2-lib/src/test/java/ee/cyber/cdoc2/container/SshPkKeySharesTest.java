@@ -3,6 +3,7 @@ package ee.cyber.cdoc2.container;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -257,6 +258,19 @@ class SshPkKeySharesTest {
         Files.writeString(pub, publicKeyLine + "\n");
         var fromFile = (SshPkEncryptionKeyMaterial) EncryptionKeyMaterial.fromSshPublicKeyFile(pub, null);
         assertEquals(recipientId, fromFile.recipientId());
+    }
+
+    @Test
+    void keyFileWithNonAsciiCommentGivesSameRecipient() throws Exception {
+        String[] fields = publicKeyLine.split(" ");
+        String line = fields[0] + " " + fields[1] + " jüri@sülearvuti\n";
+
+        for (Charset charset : List.of(StandardCharsets.UTF_8, StandardCharsets.ISO_8859_1)) {
+            Path pub = tempDir.resolve("comment-" + charset + ".pub");
+            Files.write(pub, line.getBytes(charset));
+            var fromFile = (SshPkEncryptionKeyMaterial) EncryptionKeyMaterial.fromSshPublicKeyFile(pub, null);
+            assertEquals(recipientId, fromFile.recipientId(), charset.toString());
+        }
     }
 
     @Test

@@ -272,8 +272,13 @@ public class CDocCreateCmd implements Callable<Integer> {
      */
     private EncryptionKeyMaterial sshRecipient(String sshPublicKey) throws IOException {
         Path path = Path.of(sshPublicKey.strip());
+        // Read as ISO-8859-1, not US-ASCII or UTF-8. Those two throw MalformedInputException on a byte
+        // they cannot decode, so a key comment such as "jüri@sülearvuti" would make the whole file
+        // unreadable. ISO-8859-1 maps every byte to a character and never throws. The key type and the
+        // base64 key are ASCII and decode the same in all three; the comment may decode to the wrong
+        // characters, which does not matter because it is ignored.
         String line = (!sshPublicKey.contains(" ") && Files.isRegularFile(path))
-            ? Files.readString(path, StandardCharsets.US_ASCII)
+            ? Files.readString(path, StandardCharsets.ISO_8859_1)
             : sshPublicKey;
         if (line.strip().contains("\n")) {
             throw new InvalidSshPublicKeyException(InvalidSshPublicKeyException.Reason.MALFORMED_KEY,
