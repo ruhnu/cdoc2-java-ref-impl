@@ -1,5 +1,6 @@
 package ee.cyber.cdoc2.cli.commands;
 
+import ee.cyber.cdoc2.auth.SshPublicKeyParser;
 import ee.cyber.cdoc2.container.Envelope;
 import ee.cyber.cdoc2.container.recipients.KeySharesRecipient;
 import ee.cyber.cdoc2.container.recipients.PBKDF2Recipient;
@@ -7,6 +8,7 @@ import ee.cyber.cdoc2.container.recipients.PublicKeyRecipient;
 import ee.cyber.cdoc2.container.recipients.Recipient;
 import ee.cyber.cdoc2.container.recipients.ServerRecipient;
 import ee.cyber.cdoc2.container.recipients.SymmetricKeyRecipient;
+import ee.cyber.cdoc2.fbs.recipients.KeyShareRecipientType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import picocli.CommandLine;
@@ -54,6 +56,9 @@ public class CDocInfoCmd implements Callable<Void> {
             String server = (recipient instanceof ServerRecipient serverRecipient)
                 ? "(server: " + serverRecipient.getKeyServerId() + ")"
                 : "";
+            if (isSshRecipient(recipient)) {
+                server = "(recipient: " + recipient.getRecipientId() + ")";
+            }
 
             System.out.println(
                 type + ": " + keyLabelParamsForDisplaying(keyLabelParams) + " " + server
@@ -72,6 +77,8 @@ public class CDocInfoCmd implements Callable<Void> {
             return "SymmetricKey";
         } else if (recipient instanceof PBKDF2Recipient) {
             return "Password";
+        } else if (isSshRecipient(recipient)) {
+            return "SSH public key";
         } else if (recipient instanceof KeySharesRecipient) {
             return "Smart-ID/Mobile-ID";
         } else {
@@ -79,6 +86,12 @@ public class CDocInfoCmd implements Callable<Void> {
             log.warn("Unknown recipient {}", recipient.getClass());
             return recipient.getClass().toString();
         }
+    }
+
+    private static boolean isSshRecipient(Recipient recipient) {
+        return recipient instanceof KeySharesRecipient ksr
+            && ksr.getRecipientType() == KeyShareRecipientType.RUHNU
+            && ksr.getRecipientId().toString().startsWith(SshPublicKeyParser.RECIPIENT_ID_PREFIX);
     }
     
 }

@@ -7,11 +7,13 @@ import java.util.Objects;
 
 import com.google.flatbuffers.FlatBufferBuilder;
 
+import ee.cyber.cdoc2.auth.SshPublicKeyParser;
 import ee.cyber.cdoc2.client.KeySharesClientFactory;
 import ee.cyber.cdoc2.crypto.KekTools;
 import ee.cyber.cdoc2.crypto.KeyShareUri;
 import ee.cyber.cdoc2.crypto.keymaterial.DecryptionKeyMaterial;
 import ee.cyber.cdoc2.crypto.keymaterial.decrypt.KeyShareDecryptionKeyMaterial;
+import ee.cyber.cdoc2.crypto.keymaterial.decrypt.SshPkDecryptionKeyMaterial;
 import ee.cyber.cdoc2.exceptions.CDocException;
 import ee.cyber.cdoc2.fbs.recipients.KeyShareRecipientType;
 import ee.cyber.cdoc2.fbs.recipients.KeySharesCapsule;
@@ -47,11 +49,32 @@ public class KeySharesRecipient extends Recipient {
         List<KeyShareUri> shares,
         byte[] salt
     ) {
+        this(encFmk, keyLabel, recipientId, shares, salt, KeyShareRecipientType.SID_MID);
+    }
+
+    /**
+     * Constructor
+     *
+     * @param encFmk        encrypted FMK key
+     * @param keyLabel      formatted key label
+     * @param recipientId   recipient ID, eg. 'etsi/PNOEE-48010010101' or 'ruhnu/pk/&lt;blob&gt;'
+     * @param shares        list of share server URL and share ID
+     * @param salt          encryption salt
+     * @param recipientType {@link KeyShareRecipientType} value
+     */
+    public KeySharesRecipient(
+        byte[] encFmk,
+        String keyLabel,
+        String recipientId,
+        List<KeyShareUri> shares,
+        byte[] salt,
+        byte recipientType
+    ) {
         super(encFmk, keyLabel);
         this.recipientId = recipientId;
         this.shares = shares;
         this.salt = salt;
-        this.recipientType = KeyShareRecipientType.SID_MID;
+        this.recipientType = recipientType;
         this.sharesScheme = SharesScheme.N_OF_N;
     }
 
@@ -84,6 +107,26 @@ public class KeySharesRecipient extends Recipient {
         DecryptionKeyMaterial keyMaterial,
         Services services
     ) throws GeneralSecurityException, CDocException {
+
+        if (recipientType == KeyShareRecipientType.RUHNU
+            && !recipientId.startsWith(SshPublicKeyParser.RECIPIENT_ID_PREFIX)) {
+            throw new CDocException("Unsupported recipient kind: " + recipientId
+                + ", only \"" + SshPublicKeyParser.RECIPIENT_ID_PREFIX + "\" ruhnu recipients are supported");
+        }
+
+        if (keyMaterial instanceof SshPkDecryptionKeyMaterial sshKeyMaterial) {
+            if (services == null || !services.hasService(KeySharesClientFactory.class)) {
+                throw new CDocException("KeyShares service not initialized. "
+                    + "Make sure you have provided the -Dkey-shares.properties option.");
+            }
+
+            return KekTools.deriveKekFromSshPkShares(
+                this,
+                sshKeyMaterial,
+                services.get(KeySharesClientFactory.class),
+                services
+            );
+        }
 
         if (keyMaterial instanceof KeyShareDecryptionKeyMaterial keyShareKeyMaterial) {
             if (services == null || !services.hasService(KeySharesClientFactory.class)) {

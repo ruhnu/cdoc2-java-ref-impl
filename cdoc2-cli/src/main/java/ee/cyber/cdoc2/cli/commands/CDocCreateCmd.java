@@ -1,5 +1,6 @@
 package ee.cyber.cdoc2.cli.commands;
 
+import ee.cyber.cdoc2.auth.exception.InvalidSshPublicKeyException;
 import ee.cyber.cdoc2.cli.util.InteractiveCommunicationUtil;
 import ee.cyber.cdoc2.cli.util.LabeledPasswordParamConverter;
 import ee.cyber.cdoc2.cli.util.LabeledPasswordParam;
@@ -20,6 +21,10 @@ import picocli.CommandLine.Option;
 import picocli.CommandLine.Command;
 
 import java.io.File;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.GeneralSecurityException;
 import java.time.Duration;
 import java.time.format.DateTimeParseException;
@@ -39,7 +44,7 @@ import static ee.cyber.cdoc2.util.LoggingUtil.censorFileNames;
 //CLI needs to interact with standard outputs
 @SuppressWarnings({"java:S106", "java:S125"})
 @Command(name = "create", aliases = {"c", "encrypt"}, showAtFileInUsageHelp = true)
-public class CDocCreateCmd implements Callable<Void> {
+public class CDocCreateCmd implements Callable<Integer> {
 
     private static final Logger log = LoggerFactory.getLogger(CDocCreateCmd.class);
 
@@ -85,6 +90,13 @@ public class CDocCreateCmd implements Callable<Void> {
         @Option(names = {"-mid", "--mobile-id"},
             paramLabel = "MID", description = "ID codes for mobile id encryption")
         private String[] midCodes;
+
+        @Option(names = {"-ssh", "--ssh-pubkey"},
+            paramLabel = "PUB",
+            description = "recipient SSH public key (ecdsa-sha2-nistp256 only): path to an OpenSSH .pub file, "
+                + "or one OpenSSH public key line, such as a line of `ssh-add -L` output. "
+                + "Decrypted with the matching key in ssh-agent. Requires -Dkey-shares.properties")
+        private String[] sshPublicKeys;
     }
 
     // allow -Dkey for setting System properties
@@ -116,15 +128,33 @@ public class CDocCreateCmd implements Callable<Void> {
     )
     private Duration keyCapsuleExpiryDuration;
 
+    @Option(names = { "-sexp", "--share-expiry" }, paramLabel = DURATION_FORMAT,
+        description = "Requested key share lifetime for SSH public key recipients (--ssh-pubkey). "
+            + "The shares server may shorten it. Default: shares server default",
+        converter = PositiveDurationConverter.class
+    )
+    private Duration shareLifetime;
+
     @Option(names = { "-h", "--help" }, usageHelp = true, description = "display a help message")
     private boolean helpRequested = false;
 
     @Override
-    public Void call() throws Exception {
+    public Integer call() throws Exception {
+        try {
+            create();
+            return 0;
+        } catch (InvalidSshPublicKeyException e) {
+            // readable error instead of a stack trace
+            System.err.println("ERROR: Invalid SSH public key: " + e.getMessage());
+            return 1;
+        }
+    }
+
+    private void create() throws Exception {
 
         if (log.isDebugEnabled()) {
             log.debug("create --file={} --pubkey={} --cert={} --recipient={} --secret={} "
-                    + "--password={} --smart-id={} --mobile-id={} {}",
+                    + "--password={} --smart-id={} --mobile-id={} --ssh-pubkey={} {}",
                 cdocFile,
                 Arrays.toString(recipient.pubKeys),
                 Arrays.toString(recipient.certs),
@@ -133,6 +163,7 @@ public class CDocCreateCmd implements Callable<Void> {
                 (recipient.labeledPasswordParam != null) ? "****" : null,
                 Arrays.toString(recipient.sidCodes),
                 Arrays.toString(recipient.midCodes),
+                Arrays.toString(recipient.sshPublicKeys),
                 censorFileNames(inputFiles));
         }
 
@@ -169,8 +200,6 @@ public class CDocCreateCmd implements Callable<Void> {
         cDocBuilder.buildToFile(cdocFile);
 
         log.info("Created {}", cdocFile.getAbsolutePath());
-
-        return null;
     }
 
     private void setExpiryDurationOrLogWarn(CDocBuilder cDocBuilder) {
@@ -196,15 +225,35 @@ public class CDocCreateCmd implements Callable<Void> {
         }
     }
 
+    /** Key share lifetime: a zero or negative one would create shares that have already expired */
+    public static class PositiveDurationConverter extends DurationConverter {
+        @Override
+        public Duration convert(String arg) {
+            Duration duration = super.convert(arg);
+            if (duration.isZero() || duration.isNegative()) {
+                throw new CommandLine.TypeConversionException("Duration must be positive, was " + arg);
+            }
+            return duration;
+        }
+    }
+
     private void addAuthRecipientsIfAny(
         List<EncryptionKeyMaterial> recipients,
         CDocBuilder cDocBuilder
-    ) throws GeneralSecurityException, NamingException {
+    ) throws GeneralSecurityException, NamingException, IOException {
 
-        if (isWithSid() || isWithMid()) {
+        if (isWithSid() || isWithMid() || isWithSsh()) {
             KeySharesClientFactory keySharesClientFactory =
                 Cdoc2Services.initFromSystemProperties().get(KeySharesClientFactory.class);
             cDocBuilder.withKeyShares(keySharesClientFactory);
+        }
+
+        if (isWithSsh()) {
+            for (String sshPublicKey : this.recipient.sshPublicKeys) {
+                recipients.add(sshRecipient(sshPublicKey));
+            }
+        } else if (this.shareLifetime != null) {
+            log.warn("WARNING: --share-expiry is used only for SSH public key recipients (--ssh-pubkey)");
         }
 
         List<EncryptionKeyMaterial> etsiRecipients = new EstEncKeyMaterialBuilder()
@@ -224,6 +273,30 @@ public class CDocCreateCmd implements Callable<Void> {
 
     private boolean isWithMid() {
         return this.recipient.midCodes != null;
+    }
+
+    private boolean isWithSsh() {
+        return this.recipient.sshPublicKeys != null;
+    }
+
+    /**
+     * SSH public key recipient from .pub file path or OpenSSH public key line
+     */
+    private EncryptionKeyMaterial sshRecipient(String sshPublicKey) throws IOException {
+        Path path = Path.of(sshPublicKey.strip());
+        // Read as ISO-8859-1, not US-ASCII or UTF-8. Those two throw MalformedInputException on a byte
+        // they cannot decode, so a key comment such as "jüri@sülearvuti" would make the whole file
+        // unreadable. ISO-8859-1 maps every byte to a character and never throws. The key type and the
+        // base64 key are ASCII and decode the same in all three; the comment may decode to the wrong
+        // characters, which does not matter because it is ignored.
+        String line = (!sshPublicKey.contains(" ") && Files.isRegularFile(path))
+            ? Files.readString(path, StandardCharsets.ISO_8859_1)
+            : sshPublicKey;
+        if (line.strip().contains("\n")) {
+            throw new InvalidSshPublicKeyException(InvalidSshPublicKeyException.Reason.MALFORMED_KEY,
+                "Expected one OpenSSH public key line, got several. Give each key with its own --ssh-pubkey");
+        }
+        return EncryptionKeyMaterial.fromSshPublicKey(line, this.shareLifetime);
     }
 
 }

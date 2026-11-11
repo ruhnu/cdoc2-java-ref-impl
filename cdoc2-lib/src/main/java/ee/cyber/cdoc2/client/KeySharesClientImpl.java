@@ -2,7 +2,9 @@ package ee.cyber.cdoc2.client;
 
 import java.io.IOException;
 import java.security.GeneralSecurityException;
+import java.time.OffsetDateTime;
 import java.util.Optional;
+import javax.annotation.Nullable;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -57,8 +59,13 @@ public final class KeySharesClientImpl implements KeySharesClient {
 
     @Override
     public String storeKeyShare(KeyShare keyShare) throws ExtApiException {
+        return storeKeyShare(keyShare, null);
+    }
+
+    @Override
+    public String storeKeyShare(KeyShare keyShare, @Nullable OffsetDateTime expiryTime) throws ExtApiException {
         try {
-            return apiClient.createKeyShare(keyShare, null);
+            return apiClient.createKeyShare(keyShare, expiryTime);
         } catch (ApiException e) {
             throw new ExtApiException("Failed to save key share. Error code: " + e.getCode(), e);
         } catch (Exception e) {

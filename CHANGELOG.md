@@ -1,5 +1,29 @@
 # Changelog
 
+## [Unreleased]
+### Features
+* SSH public key recipients through key shares (ECDSA P-256 keys only). New recipient type `RUHNU`
+  with `recipient_id` `ruhnu/pk/<base64 OpenSSH public key blob>`:
+  * encrypt with `EncryptionKeyMaterial.fromSshPublicKey(line, shareLifetime)` or
+    `fromSshPublicKeyFile(path, shareLifetime)`; the optional lifetime is sent as `x-expiry-time`
+  * decrypt with `DecryptionKeyMaterial.fromSshAgentKey(recipientId)`: the auth token (SD-JWT,
+    ES256) is signed by ssh-agent (`$SSH_AUTH_SOCK`), no auth server, RP server or session token
+  * `SshAgentClient` and `SshAgentJWSSigner` (ssh-agent over Unix domain socket)
+* cdoc2-cli: `create --ssh-pubkey <file.pub | OpenSSH key line>` (repeatable) and
+  `--share-expiry <duration>`, `decrypt --ssh-agent[=<socket>]`; `info` shows SSH recipients.
+  ssh-agent and invalid SSH key errors are printed without stack trace (exit code 1)
+* Key shares recipient type is now read from the container (was always Smart-ID/Mobile-ID)
+* Key shares client: session headers optional (key-shares API 1.4.0-draft),
+  `KeySharesClient.storeKeyShare(KeyShare, OffsetDateTime)` requests an expiry time
+
+### Maven package versions:
+```
+cdoc2-schema 2.2.0-SNAPSHOT
+cdoc2-lib 3.8.0-SNAPSHOT
+cdoc2-client 2.4.0-SNAPSHOT
+cdoc2-cli 1.10.0-SNAPSHOT
+```
+
 ## [3.5.2]
 ### Improvements
 * Directory accessibility check operates correctly on multiple platforms

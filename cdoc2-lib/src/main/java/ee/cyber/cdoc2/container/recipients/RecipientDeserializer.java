@@ -13,6 +13,7 @@ import ee.cyber.cdoc2.fbs.recipients.ECCPublicKeyCapsule;
 import ee.cyber.cdoc2.fbs.recipients.EccKeyDetails;
 import ee.cyber.cdoc2.fbs.recipients.KeyDetailsUnion;
 import ee.cyber.cdoc2.fbs.recipients.KeyServerCapsule;
+import ee.cyber.cdoc2.fbs.recipients.KeyShareRecipientType;
 import ee.cyber.cdoc2.fbs.recipients.KeySharesCapsule;
 import ee.cyber.cdoc2.fbs.recipients.PBKDF2Capsule;
 import ee.cyber.cdoc2.fbs.recipients.RSAPublicKeyCapsule;
@@ -153,12 +154,18 @@ public final class RecipientDeserializer {
         byte[] salt
             = Arrays.copyOfRange(saltBuf.array(), saltBuf.position(), saltBuf.limit());
 
+        // containers written before RUHNU existed always have SID_MID
+        byte recipientType = sharesCapsule.recipientType() == KeyShareRecipientType.RUHNU
+            ? KeyShareRecipientType.RUHNU
+            : KeyShareRecipientType.SID_MID;
+
         return new KeySharesRecipient(
             encryptedFmkBytes,
             keyLabel,
             sharesCapsule.recipientId(),
             keyShares,
-            salt
+            salt,
+            recipientType
         );
     }
 

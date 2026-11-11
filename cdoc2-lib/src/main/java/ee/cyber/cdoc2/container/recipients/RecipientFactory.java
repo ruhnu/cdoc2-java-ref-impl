@@ -23,7 +23,9 @@ import ee.cyber.cdoc2.crypto.RsaUtils;
 import ee.cyber.cdoc2.crypto.KeyAlgorithm;
 import ee.cyber.cdoc2.crypto.keymaterial.encrypt.PublicKeyEncryptionKeyMaterial;
 import ee.cyber.cdoc2.crypto.keymaterial.encrypt.SecretEncryptionKeyMaterial;
+import ee.cyber.cdoc2.crypto.keymaterial.encrypt.SshPkEncryptionKeyMaterial;
 import ee.cyber.cdoc2.fbs.header.FMKEncryptionMethod;
+import ee.cyber.cdoc2.fbs.recipients.KeyShareRecipientType;
 import ee.cyber.cdoc2.fbs.recipients.KeySharesCapsule;
 import ee.cyber.cdoc2.fbs.recipients.PBKDF2Capsule;
 import ee.cyber.cdoc2.fbs.recipients.SymmetricKeyCapsule;
@@ -42,6 +44,8 @@ import java.security.PublicKey;
 import java.security.interfaces.ECPublicKey;
 import java.security.interfaces.RSAPublicKey;
 import java.security.spec.InvalidParameterSpecException;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedList;
@@ -123,6 +127,12 @@ public final class RecipientFactory {
                 keySharesClientFactory,
                 fileMasterKey,
                 keyShareKeyMaterial
+            ));
+        } else if (encKeyMaterial instanceof SshPkEncryptionKeyMaterial sshKeyMaterial) {
+            recipients.add(buildKeySharesRecipient(
+                keySharesClientFactory,
+                fileMasterKey,
+                sshKeyMaterial
             ));
         } else {
             addSymmetricKeyRecipient(
@@ -429,6 +439,48 @@ public final class RecipientFactory {
         byte[] fileMasterKey,
         KeyShareEncryptionKeyMaterial keyShareMaterial
     ) throws GeneralSecurityException, ExtApiException {
+        // plain ETSI Identifier is a value 'etsi/PNOEE-48010010101', extracted from the
+        // semantics identifier
+        return buildKeySharesRecipient(
+            keySharesClientFactory,
+            fileMasterKey,
+            keyShareMaterial.authIdentifier().getEtsiIdentifier(),
+            keyShareMaterial.keyLabel(),
+            KeyShareRecipientType.SID_MID,
+            null
+        );
+    }
+
+    /**
+     * Build key shares recipient for SSH public key ("ruhnu/pk/") recipient
+     */
+    private static KeySharesRecipient buildKeySharesRecipient(
+        @Nullable KeySharesClientFactory keySharesClientFactory,
+        byte[] fileMasterKey,
+        SshPkEncryptionKeyMaterial sshKeyMaterial
+    ) throws GeneralSecurityException, ExtApiException {
+        OffsetDateTime expiryTime = (sshKeyMaterial.shareLifetime() == null)
+            ? null
+            : OffsetDateTime.now(ZoneOffset.UTC).plus(sshKeyMaterial.shareLifetime());
+        return buildKeySharesRecipient(
+            keySharesClientFactory,
+            fileMasterKey,
+            sshKeyMaterial.recipientId(),
+            sshKeyMaterial.keyLabel(),
+            KeyShareRecipientType.RUHNU,
+            expiryTime
+        );
+    }
+
+    @SuppressWarnings("checkstyle:ParameterNumber")
+    private static KeySharesRecipient buildKeySharesRecipient(
+        @Nullable KeySharesClientFactory keySharesClientFactory,
+        byte[] fileMasterKey,
+        String recipientId,
+        String formattedKeyLabel,
+        byte recipientType,
+        @Nullable OffsetDateTime shareExpiryTime
+    ) throws GeneralSecurityException, ExtApiException {
 
         if (null == keySharesClientFactory) {
             log.error("Failed to create Key share recipient. Key share clients are not created");
@@ -445,30 +497,28 @@ public final class RecipientFactory {
 
         String fmkEncMethod = FMKEncryptionMethod.name(Envelope.FMK_ENC_METHOD_BYTE);
 
-        // plain ETSI Identifier is a value 'etsi/PNOEE-48010010101', extracted from the
-        // semantics identifier
-        String plainEtsiIdentifier = keyShareMaterial.authIdentifier().getEtsiIdentifier();
-        String info = "CDOC2kek" + fmkEncMethod + plainEtsiIdentifier;
+        String info = "CDOC2kek" + fmkEncMethod + recipientId;
         byte[] kek = hkdf.expand(kekPm, info.getBytes(StandardCharsets.UTF_8), Crypto.KEK_LEN_BYTES);
 
         byte[] encryptedFmk = Crypto.xor(fileMasterKey, kek);
 
-        List<KeyShareUri> shares = createKeyShares(kek, plainEtsiIdentifier, keySharesClientFactory);
-        String formattedKeyLabel = keyShareMaterial.keyLabel();
+        List<KeyShareUri> shares = createKeyShares(kek, recipientId, keySharesClientFactory, shareExpiryTime);
 
         return new KeySharesRecipient(
             encryptedFmk,
             formattedKeyLabel,
-            plainEtsiIdentifier,
+            recipientId,
             shares,
-            salt
+            salt,
+            recipientType
         );
     }
 
     private static List<KeyShareUri> createKeyShares(
         byte[] keyEncryptionKey,
         String keyLabel,
-        KeySharesClientFactory keySharesClientFactory
+        KeySharesClientFactory keySharesClientFactory,
+        @Nullable OffsetDateTime shareExpiryTime
     ) throws GeneralSecurityException, ExtApiException {
 
         List<KeySharesClient> clients = keySharesClientFactory.getClients().stream().toList();
@@ -488,12 +538,13 @@ public final class RecipientFactory {
             mapSharesToClient.put(clients.get(i), splitShares.get(i));
         }
 
-        return saveKeySharesToServers(mapSharesToClient, keyLabel);
+        return saveKeySharesToServers(mapSharesToClient, keyLabel, shareExpiryTime);
     }
 
     private static List<KeyShareUri> saveKeySharesToServers(
         Map<KeySharesClient, byte[]> mapSharesToClient,
-        String keyLabel
+        String keyLabel,
+        @Nullable OffsetDateTime shareExpiryTime
     ) throws ExtApiException {
         List<KeyShareUri> shares = new LinkedList<>();
 
@@ -502,7 +553,9 @@ public final class RecipientFactory {
             keyShare.setRecipient(keyLabel);
             keyShare.setShare(entry.getValue());
             KeySharesClient client = entry.getKey();
-            String shareId = client.storeKeyShare(keyShare);
+            String shareId = (shareExpiryTime == null)
+                ? client.storeKeyShare(keyShare)
+                : client.storeKeyShare(keyShare, shareExpiryTime);
             shares.add(new KeyShareUri(client.getServerIdentifier(), shareId));
         }
 

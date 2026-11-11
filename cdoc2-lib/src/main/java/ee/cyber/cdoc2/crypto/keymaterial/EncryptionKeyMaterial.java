@@ -1,5 +1,6 @@
 package ee.cyber.cdoc2.crypto.keymaterial;
 
+import ee.cyber.cdoc2.auth.SshPublicKeyParser;
 import ee.cyber.cdoc2.crypto.EncryptionKeyOrigin;
 import ee.cyber.cdoc2.crypto.KeyLabelParams;
 import ee.cyber.cdoc2.crypto.KeyLabelTools;
@@ -9,10 +10,17 @@ import ee.cyber.cdoc2.crypto.keymaterial.encrypt.KeyShareEncryptionKeyMaterial;
 import ee.cyber.cdoc2.crypto.keymaterial.encrypt.PasswordEncryptionKeyMaterial;
 import ee.cyber.cdoc2.crypto.keymaterial.encrypt.PublicKeyEncryptionKeyMaterial;
 import ee.cyber.cdoc2.crypto.keymaterial.encrypt.SecretEncryptionKeyMaterial;
+import ee.cyber.cdoc2.crypto.keymaterial.encrypt.SshPkEncryptionKeyMaterial;
 
+import javax.annotation.Nullable;
 import javax.crypto.SecretKey;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.PublicKey;
+import java.time.Duration;
 import java.util.Objects;
 
 import static ee.cyber.cdoc2.config.ConfigurationProperties.isKeyLabelMachineReadableFormatEnabled;
@@ -156,6 +164,45 @@ public interface EncryptionKeyMaterial {
         KeyLabelParams keyLabelParams
     ) {
         return new KeyShareEncryptionKeyMaterial(authIdentifier, formatKeyLabel(keyLabelParams));
+    }
+
+    /**
+     * Create {@link SshPkEncryptionKeyMaterial} for encrypting to an SSH public key through key shares.
+     * Only ECDSA P-256 (ecdsa-sha2-nistp256) keys are supported. The key comment is ignored.
+     * @param openSshPublicKeyLine OpenSSH public key line, as in a .pub file or `ssh-add -L` output
+     * @param shareLifetime requested key share lifetime, {@code null} for shares server default
+     * @return EncryptionKeyMaterial object
+     * @throws ee.cyber.cdoc2.auth.exception.InvalidSshPublicKeyException if the key can't be parsed or
+     *         its type is not supported
+     */
+    static EncryptionKeyMaterial fromSshPublicKey(
+        String openSshPublicKeyLine,
+        @Nullable Duration shareLifetime
+    ) {
+        String recipientId = SshPublicKeyParser.recipientIdFromOpenSshLine(openSshPublicKeyLine);
+        KeyLabelParams keyLabelParams = KeyLabelTools.createKeySharesKeyLabelParams(
+            "ruhnu/pk:" + SshPublicKeyParser.fingerprintFromRecipientId(recipientId));
+        return new SshPkEncryptionKeyMaterial(recipientId, formatKeyLabel(keyLabelParams), shareLifetime);
+    }
+
+    /**
+     * Create {@link SshPkEncryptionKeyMaterial} from OpenSSH public key file (.pub)
+     * @param publicKeyFile OpenSSH public key file
+     * @param shareLifetime requested key share lifetime, {@code null} for shares server default
+     * @return EncryptionKeyMaterial object
+     * @throws IOException if reading the file fails
+     * @see #fromSshPublicKey(String, Duration)
+     */
+    static EncryptionKeyMaterial fromSshPublicKeyFile(
+        Path publicKeyFile,
+        @Nullable Duration shareLifetime
+    ) throws IOException {
+        // Read as ISO-8859-1, not US-ASCII or UTF-8. Those two throw MalformedInputException on a byte
+        // they cannot decode, so a key comment such as "jüri@sülearvuti" would make the whole file
+        // unreadable. ISO-8859-1 maps every byte to a character and never throws. The key type and the
+        // base64 key are ASCII and decode the same in all three; the comment may decode to the wrong
+        // characters, which does not matter because it is ignored.
+        return fromSshPublicKey(Files.readString(publicKeyFile, StandardCharsets.ISO_8859_1), shareLifetime);
     }
 
     static EncryptionKeyMaterialCollectionBuilder collectionBuilder() {

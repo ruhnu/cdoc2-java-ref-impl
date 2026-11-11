@@ -81,7 +81,9 @@ table KeyShare {
 
 enum KeyShareRecipientType:byte {
     UNKNOWN,
-    SID_MID
+    SID_MID,
+    // fork-defined identifiers "ruhnu/<kind>/...", kind is taken from recipient_id prefix
+    RUHNU
 }
 
 enum SharesScheme:byte {
@@ -100,5 +102,8 @@ table KeySharesCapsule {
     // provided with auth token https://github.com/open-eid/cdoc2-openapi/blob/55a0b02adae0d8c61f2589a47555a93e4cf31971/cdoc2-key-shares-openapi.yaml#L54
     // example recipient_id "etsi/PNOEE-48010010101" where string after "etsi/" is ETSI Semantics Identifier defined in "ETSI EN 319 412-1"
     // In future might support other identifiers in format "private/VENDOR/identifier"
+    // For recipient_type RUHNU, recipient_id is "ruhnu/<kind>/..." and the kind is read from the prefix:
+    //   "ruhnu/pk/<blob>" - SSH public key, <blob> is standard base64 (with padding) of the OpenSSH public key
+    //   wire blob, as in the second field of an OpenSSH .pub line. Only ecdsa-sha2-nistp256 is supported.
     recipient_id:         string (required);
 }

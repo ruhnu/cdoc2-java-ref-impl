@@ -8,13 +8,13 @@
     </parent>
 
     <artifactId>cdoc2-cli</artifactId>
-    <version>1.9.4</version>
+    <version>1.10.0-SNAPSHOT</version>
     <description>Command line utility to create/process CDOC2 files</description>
 
     <properties>
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
-        <cdoc2-lib.version>3.7.3</cdoc2-lib.version>
+        <cdoc2-lib.version>3.8.0-SNAPSHOT</cdoc2-lib.version>
     </properties>
 
     <pluginRepositories>
@@ -27,6 +27,18 @@
             <url>https://repository.apache.org/content/repositories/public</url>
         </pluginRepository>
     </pluginRepositories>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- same as cdoc2-lib; the test dependencies (wiremock) would otherwise pull in 2.3.3 (javax packages),
+                 which breaks jersey-media-json-jackson in tests -->
+            <dependency>
+                <groupId>jakarta.xml.bind</groupId>
+                <artifactId>jakarta.xml.bind-api</artifactId>
+                <version>4.0.2</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
     <dependencies>
         <dependency>
@@ -43,6 +55,20 @@
             <groupId>ee.cyber.cdoc2</groupId>
             <artifactId>cdoc2-lib</artifactId>
             <version>${cdoc2-lib.version}</version>
+        </dependency>
+        <!-- TestSshAgent, wiremock keystore and client truststore for SSH recipient tests -->
+        <dependency>
+            <groupId>ee.cyber.cdoc2</groupId>
+            <artifactId>cdoc2-lib</artifactId>
+            <version>${cdoc2-lib.version}</version>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.wiremock</groupId>
+            <artifactId>wiremock</artifactId>
+            <version>3.13.2</version>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 

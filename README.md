@@ -191,6 +191,52 @@ can do that.
     downloaded `share` [objects](https://github.com/open-eid/cdoc2-openapi/blob/55a0b02adae0d8c61f2589a47555a93e4cf31971/cdoc2-key-shares-openapi.yaml#L144) into `KEK`
 18. *Follow steps from ECDH scenario 13-15*
 
+### CDOC2 with symmetric key from/to N-of-N shares (SSH public key, ssh-agent)
+
+Same N-of-N key shares scenario as for Smart-ID/Mobile-ID, but the recipient is an SSH public key and the
+recipient proves possession of the private key by signing the auth token through `ssh-agent`. `ssh-agent` can
+sign but can't decrypt, which is why key shares are used. No Smart-ID, Mobile-ID, RP server or auth server is
+involved, and the private key never leaves the agent. Only ECDSA P-256 (`ecdsa-sha2-nistp256`) keys are
+supported. Shares servers must have SSH public key recipients enabled (`cdoc2.ruhnu.enabled=true`).
+
+1. Sender has recipient's OpenSSH public key, for example from a `.pub` file or `ssh-add -L` output.
+   Recipient identifier is `ruhnu/pk/<base64 OpenSSH public key blob>`, where the blob is the base64 string
+   from the second field of the `.pub` line (key type, curve name and public point; the comment is not part
+   of it). The identifier contains the public key itself, so no certificate, trust store or key registry is
+   needed.
+2. *Follow steps from Smart-ID/Mobile-ID scenario 2-4*, with `RecipientInfo_i` = `ruhnu/pk/<blob>`
+3. Sender uploads each `share` with recipient `ruhnu/pk/<blob>` to each CDOC2 shares server. Sender may
+   request a share lifetime (`x-expiry-time`); the server decides the actual expiry (default 14 days) and
+   refuses the share after it. Sender gets `shareID` for each share.
+4. *Follow steps from Smart-ID/Mobile-ID scenario 6-7*
+5. Sender adds `encrypted FMK` and `KeySharesCapsule` with `recipient_type` `RUHNU` and `recipient_id`
+   `ruhnu/pk/<blob>` with list of `server:shareId` into CDOC2 header.
+6. *Follow steps from Smart-ID/Mobile-ID scenario 9-11*
+7. Recipient finds `KeySharesCapsule` records with `recipient_type` `RUHNU` and `recipient_id` starting with
+   `ruhnu/pk/`, and checks that `ssh-agent` (`$SSH_AUTH_SOCK`) holds the private key of one of them. If not,
+   decryption stops here, before anything is sent to the shares servers.
+8. Recipient requests a `nonce` for each share using `/key-shares/{shareId}/nonce` endpoint in each
+   `cdoc2-shares-server`. No session token is needed for `ruhnu/pk/` shares.
+9. Recipient creates the auth token (SD-JWT) as in Smart-ID/Mobile-ID scenario step 14: `iss` is
+   `ruhnu/pk/<blob>`, and `aud` contains one selectively disclosable element per share (server URL,
+   `shareId` and `nonce`).
+10. Recipient signs the auth token once through `ssh-agent`, as a standard JWS with algorithm `ES256`. The agent
+    signs the JWS signing input with the private key (SHA-256, ECDSA) and returns the signature values `r` and
+    `s` in SSH encoding, which are converted to the JWS `r||s` encoding.
+11. Recipient downloads all `share` objects by presenting the auth token, with only that share's `aud` element
+    disclosed, using `/key-shares/{shareId}` endpoint. No certificate, session token, Smart-ID parameters or RP
+    countersignature is sent.
+12. Each shares server releases the `share` only if:
+    * the JWS signature verifies with the public key decoded from `iss`,
+    * the disclosed `aud` element names this server, this `shareId` and an unexpired `nonce` this server
+      issued for the share,
+    * `iss` equals the share's recipient, and the share has not expired.
+13. *Follow steps from Smart-ID/Mobile-ID scenario 17-18*
+
+Anyone who can use the recipient's `ssh-agent` can decrypt. With a forwarded agent (`ssh -A`) that includes root
+on the remote host, so prefer decrypting locally, and consider `ssh-add -c` (confirm every use) or a FIDO key.
+Access ends when the shares expire; deleting the shares on any one server revokes it earlier.
+
 
 ## Structure
 [![CDOC2 Dependencies](./cdoc2-docs/img/deps.drawio.png)](https://viewer.diagrams.net/?tags=%7B%7D&lightbox=1&highlight=0000ff&edit=_blank&layers=1&nav=1#R%3Cmxfile%3E%3Cdiagram%20id%3D%22cR2MIER7KRh0lRtEKnlR%22%20name%3D%22Page-1%22%3E3VjbcpswEP0aP9rDJRD86EucTifteOKZtOmbAjIoEYgIYZt8fSUjgriY0DQNHT9ZOtpdSWcvWjMyF%2BHhmoI4%2BEY8iEeG5h1G5nJkGLplG%2FxHIFmOOLaTAz5FnhQqgQ16gRLUJJoiDyYVQUYIZiiugi6JIuiyCgYoJfuq2Jbg6q4x8OWOWglsXIBhQ%2BwH8lggUV1TxL9A5Adya8eSCyEohCWQBMAjewUyr0bmghLC8lF4WEAsyCt4yfVWJ1ZfD0ZhxPooPN4%2Fb%2BB0%2B7RazuaPaTzzV7d4rNvycCwrbgw9ToCcEsoC4pMI4KsSnVOSRh4UZjU%2BK2VuCIk5qHPwETKWSW%2BClBEOBSzEchUeEPupjO%2BFqYklZ8uDtHycZHISEeUIR80mAZKThKTUlbf5lVpIu%2F66eFnDG%2FP5ln1%2FuEvHMiYZoD5kHXJWLicYUTaQ9F5DEkJGMy5AIQYM7aohA2Tk%2Ba9ypXP4QPrnT3zlDOkrbWJPFXfpnc7iHqGZqiXmQm2sTTSnAErd4%2By0p4XtNaSI8wipqlMHPzQkWp1gDxUSXafeAZzKnTB6aEQJrzyxGIbES49BATDyIw5guOV3nScxcFHk3xxnS0NTJFxOpGB3voOUIV4WZ3KBifCZ7wPE4IarC%2FN7%2FgJUY%2BekO4Q1eOgksFi9lHeU74cpq%2BleKcZFLQ6UOlyU4Q%2Bn3GxQPjJsLGj00I4PfTEkMYxAjIoVvpGyeNb%2BMbShHWQ1HJS4AQzBWdFuXmiDpUX743QxxOP0zqag9QZmz6bA%2BK%2BagmY5cjE6r1B%2FM9Knnxnodhvh4nbnxHm9quvG4PXFHKK%2BqH2spfaxZdfau4dt61eV5vpSba4n2kV3f93SEL%2B%2F8tk9K5%2F50ZVPqq4JEvlTBF894%2FVpLajyC0mtWly9HqNXqG3Q3Rbs3ZWz1FY0A8H64ellXGRLmeE8MIKzyu96%2B6Drn5jfraS3tdX1fI%2B8mfiiIwjEIEmQW%2BWlmu1t3xj6%2Fmk9nel6M9X%2F%2FR%2FRrih9MxkVj1odDv3bnDVqr7TTL2ebhi5rhsyaoZyYdyQ%2Fn5Yf23Lx8pOlefUb%3C%2Fdiagram%3E%3C%2Fmxfile%3E)
