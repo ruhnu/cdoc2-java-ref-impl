@@ -136,7 +136,7 @@ class SshPkCliTest {
 
         stubNonceAndGetShare();
         Path outDir = Files.createDirectories(tempDir.resolve("out"));
-        assertEquals(0, run("decrypt", "-f", cdocFile.toString(), "--ssh-agent=" + agent.socket(),
+        assertEquals(0, run("decrypt", "-f", cdocFile.toString(), "--ssh-agent-socket=" + agent.socket(),
             "-o", outDir.toString(), keySharesProperties), err.toString());
 
         assertEquals("secret payload", Files.readString(outDir.resolve("payload.txt")));
@@ -189,11 +189,37 @@ class SshPkCliTest {
         assertEquals(0, server1.findAll(postRequestedFor(urlEqualTo("/key-shares"))).size());
     }
 
+    // the warning about a shortened lifetime is tested in cdoc2-lib (SshPkKeySharesTest): the test
+    // logger here writes to the System.err of the first test, not to this test's captured stream
+
+    @Test
+    void shouldRejectNonPositiveShareExpiry() throws Exception {
+        for (String expiry : List.of("PT0S", "-P1D")) {
+            err.reset();
+            assertTrue(run("create", "-f", cdocFile.toString(), "--ssh-pubkey", pubKeyFile.toString(),
+                "--share-expiry", expiry, keySharesProperties, payload.toString()) != 0, expiry);
+            assertTrue(err.toString().contains("must be positive"), err.toString());
+            assertFalse(err.toString().contains("\tat "), "stack trace printed: " + err);
+        }
+        assertEquals(0, server1.findAll(postRequestedFor(urlEqualTo("/key-shares"))).size());
+    }
+
+    @Test
+    void sshAgentFlagShouldNotTakeFileToExtractAsSocket() throws Exception {
+        createContainer();
+
+        // positional "payload.txt" is the file to extract, not an agent socket path
+        run("decrypt", "-f", cdocFile.toString(), "-o", tempDir.toString(), keySharesProperties,
+            "--ssh-agent", "payload.txt");
+
+        assertFalse(err.toString().contains("cannot connect to payload.txt"), err.toString());
+    }
+
     @Test
     void shouldReportNoAgentReadably() throws Exception {
         createContainer();
 
-        assertEquals(1, run("decrypt", "-f", cdocFile.toString(), "--ssh-agent=" + tempDir.resolve("none.sock"),
+        assertEquals(1, run("decrypt", "-f", cdocFile.toString(), "--ssh-agent-socket=" + tempDir.resolve("none.sock"),
             "-o", tempDir.toString(), keySharesProperties));
 
         assertTrue(err.toString().contains("ERROR: ssh-agent is not available"), err.toString());
@@ -207,7 +233,7 @@ class SshPkCliTest {
             other.generateKey("other", "ecdsa");
             other.addKey("other", false);
 
-            assertEquals(1, run("decrypt", "-f", cdocFile.toString(), "--ssh-agent=" + other.socket(),
+            assertEquals(1, run("decrypt", "-f", cdocFile.toString(), "--ssh-agent-socket=" + other.socket(),
                 "-o", tempDir.toString(), keySharesProperties));
         }
 
@@ -229,7 +255,7 @@ class SshPkCliTest {
             Files.copy(agent.keyFile("p256"), refusingDir.resolve("p256"));
             refusing.addKey("p256", true); // ssh-add -c, confirmation declined
 
-            assertEquals(1, run("decrypt", "-f", cdocFile.toString(), "--ssh-agent=" + refusing.socket(),
+            assertEquals(1, run("decrypt", "-f", cdocFile.toString(), "--ssh-agent-socket=" + refusing.socket(),
                 "-o", tempDir.toString(), keySharesProperties));
         }
 

@@ -65,7 +65,27 @@ public final class Cdoc2KeySharesApiClient extends KeySharesClientBuilder {
 
         ApiResponse<Void> response = sharesApi.createKeyShareWithHttpInfo(keyShare, xExpiryTime);
 
+        if (xExpiryTime != null && "true".equalsIgnoreCase(findHeader(response, "x-expiry-time-adjusted"))) {
+            // the requester would otherwise believe the share lives as long as requested
+            log.warn("WARNING: key shares server {} shortened the requested key share lifetime, "
+                    + "share expires at {}",
+                sharesApi.getApiClient().getBasePath(), findHeader(response, "x-expiry-time"));
+        }
+
         return extractIdFromHeader(response, "KeyShare", "shareId", log);
+    }
+
+    /** First value of a response header, name compared case-insensitively; {@code null} if absent */
+    @Nullable
+    private static String findHeader(ApiResponse<?> response, String name) {
+        if (response.getHeaders() == null) {
+            return null;
+        }
+        return response.getHeaders().entrySet().stream()
+            .filter(e -> name.equalsIgnoreCase(e.getKey()) && !e.getValue().isEmpty())
+            .map(e -> e.getValue().get(0))
+            .findFirst()
+            .orElse(null);
     }
 
     /**

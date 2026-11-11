@@ -213,7 +213,8 @@ java -jar target/cdoc2-cli-*.jar create \
 ```
 
 A shorter share lifetime can be requested with `-sexp`, `--share-expiry` (format `P(n)DT(n)H(n)M(n)S`, for
-example `P3D` for 3 days). The shares servers cut longer requests to their maximum:
+example `P3D` for 3 days). It must be positive. The shares servers cut longer requests to their maximum, and
+the CLI prints a warning with the actual expiry time for each server that did:
 
 ```
 java -jar target/cdoc2-cli-*.jar create \
@@ -238,7 +239,8 @@ java -jar target/cdoc2-cli-*.jar decrypt \
   --ssh-agent -f /tmp/ssh.cdoc2 -o /tmp
 ```
 
-`--ssh-agent=/path/to/agent.sock` uses another agent socket instead of `$SSH_AUTH_SOCK`.
+`--ssh-agent-socket /path/to/agent.sock`, used instead of `--ssh-agent`, uses another agent socket instead
+of `$SSH_AUTH_SOCK`.
 
 Errors are reported without a stack trace, with exit code 1:
 

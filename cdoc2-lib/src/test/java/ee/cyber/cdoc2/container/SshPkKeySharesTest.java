@@ -26,7 +26,14 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 import org.junit.jupiter.api.io.TempDir;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+import org.slf4j.LoggerFactory;
+
 import ee.cyber.cdoc2.auth.SshPublicKeyParser;
+import ee.cyber.cdoc2.client.Cdoc2KeySharesApiClient;
 import ee.cyber.cdoc2.auth.exception.InvalidSshPublicKeyException;
 import ee.cyber.cdoc2.client.KeySharesClientFactory;
 import ee.cyber.cdoc2.client.KeySharesClientHelper;
@@ -175,6 +182,39 @@ class SshPkKeySharesTest {
             OffsetDateTime requested = OffsetDateTime.parse(create.getHeader("x-expiry-time"));
             Duration diff = Duration.between(before.plusDays(3), requested).abs();
             assertTrue(diff.compareTo(Duration.ofMinutes(1)) < 0, "requested " + requested);
+        }
+    }
+
+    @Test
+    void shouldWarnWhenServerShortensShareLifetime() throws Exception {
+        server1.stubFor(post(urlEqualTo("/key-shares"))
+            .willReturn(aResponse().withStatus(201)
+                .withHeader("Location", "/key-shares/ss01020304050607080910111213141516")
+                .withHeader("x-expiry-time-adjusted", "true")
+                .withHeader("x-expiry-time", "2026-11-25T10:00:00Z")));
+        Logger logger = (Logger) LoggerFactory.getLogger(Cdoc2KeySharesApiClient.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            encrypt(EncryptionKeyMaterial.fromSshPublicKey(publicKeyLine, Duration.ofDays(30)));
+        } finally {
+            logger.detachAppender(appender);
+        }
+
+        List<ILoggingEvent> warnings = appender.list.stream()
+            .filter(e -> e.getLevel() == Level.WARN).toList();
+        assertEquals(1, warnings.size(), "only server1 shortened the lifetime: " + warnings);
+        String message = warnings.get(0).getFormattedMessage();
+        assertTrue(message.contains("localhost:" + server1.getHttpsPort()), message);
+        assertTrue(message.contains("share expires at 2026-11-25T10:00:00Z"), message);
+    }
+
+    @Test
+    void shouldRefuseNonPositiveShareLifetime() {
+        for (Duration lifetime : List.of(Duration.ZERO, Duration.ofDays(-1))) {
+            assertThrows(IllegalArgumentException.class,
+                () -> EncryptionKeyMaterial.fromSshPublicKey(publicKeyLine, lifetime), lifetime.toString());
         }
     }
 

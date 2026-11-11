@@ -96,7 +96,8 @@ public class SshAgentJWSSigner implements JWSSigner {
             copyFixedWidth(r, jws, 0);
             copyFixedWidth(s, jws, P256_COORDINATE_LEN);
             return jws;
-        } catch (BufferUnderflowException | SshAgentException e) {
+        } catch (BufferUnderflowException | SshAgentException | NumberFormatException e) {
+            // NumberFormatException: zero length mpint, which new BigInteger(byte[]) refuses
             throw new JOSEException("Malformed ssh-agent ECDSA signature", e);
         }
     }

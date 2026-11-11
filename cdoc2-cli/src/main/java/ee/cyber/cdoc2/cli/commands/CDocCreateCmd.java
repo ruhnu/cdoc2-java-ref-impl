@@ -131,7 +131,7 @@ public class CDocCreateCmd implements Callable<Integer> {
     @Option(names = { "-sexp", "--share-expiry" }, paramLabel = DURATION_FORMAT,
         description = "Requested key share lifetime for SSH public key recipients (--ssh-pubkey). "
             + "The shares server may shorten it. Default: shares server default",
-        converter = DurationConverter.class
+        converter = PositiveDurationConverter.class
     )
     private Duration shareLifetime;
 
@@ -222,6 +222,18 @@ public class CDocCreateCmd implements Callable<Integer> {
                     "Expiry duration format should be " + DURATION_FORMAT
                 );
             }
+        }
+    }
+
+    /** Key share lifetime: a zero or negative one would create shares that have already expired */
+    public static class PositiveDurationConverter extends DurationConverter {
+        @Override
+        public Duration convert(String arg) {
+            Duration duration = super.convert(arg);
+            if (duration.isZero() || duration.isNegative()) {
+                throw new CommandLine.TypeConversionException("Duration must be positive, was " + arg);
+            }
+            return duration;
         }
     }
 
