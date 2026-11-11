@@ -131,7 +131,7 @@ public class CDocCreateCmd implements Callable<Integer> {
     @Option(names = { "-sexp", "--share-expiry" }, paramLabel = DURATION_FORMAT,
         description = "Requested key share lifetime for SSH public key recipients (--ssh-pubkey). "
             + "The shares server may shorten it. Default: shares server default",
-        converter = DurationConverter.class
+        converter = PositiveDurationConverter.class
     )
     private Duration shareLifetime;
 
@@ -225,6 +225,18 @@ public class CDocCreateCmd implements Callable<Integer> {
         }
     }
 
+    /** Key share lifetime: a zero or negative one would create shares that have already expired */
+    public static class PositiveDurationConverter extends DurationConverter {
+        @Override
+        public Duration convert(String arg) {
+            Duration duration = super.convert(arg);
+            if (duration.isZero() || duration.isNegative()) {
+                throw new CommandLine.TypeConversionException("Duration must be positive, was " + arg);
+            }
+            return duration;
+        }
+    }
+
     private void addAuthRecipientsIfAny(
         List<EncryptionKeyMaterial> recipients,
         CDocBuilder cDocBuilder
@@ -272,8 +284,13 @@ public class CDocCreateCmd implements Callable<Integer> {
      */
     private EncryptionKeyMaterial sshRecipient(String sshPublicKey) throws IOException {
         Path path = Path.of(sshPublicKey.strip());
+        // Read as ISO-8859-1, not US-ASCII or UTF-8. Those two throw MalformedInputException on a byte
+        // they cannot decode, so a key comment such as "jüri@sülearvuti" would make the whole file
+        // unreadable. ISO-8859-1 maps every byte to a character and never throws. The key type and the
+        // base64 key are ASCII and decode the same in all three; the comment may decode to the wrong
+        // characters, which does not matter because it is ignored.
         String line = (!sshPublicKey.contains(" ") && Files.isRegularFile(path))
-            ? Files.readString(path, StandardCharsets.US_ASCII)
+            ? Files.readString(path, StandardCharsets.ISO_8859_1)
             : sshPublicKey;
         if (line.strip().contains("\n")) {
             throw new InvalidSshPublicKeyException(InvalidSshPublicKeyException.Reason.MALFORMED_KEY,

@@ -44,10 +44,14 @@ public class DecryptionKeyExclusiveArgument {
     @CommandLine.ArgGroup(exclusive = false)
     private MobileIdArguments midArguments;
 
-    @CommandLine.Option(names = {"-ssh", "--ssh-agent"}, arity = "0..1", fallbackValue = "",
-        paramLabel = "SOCKET",
-        description = "decrypt SSH public key recipient with the matching key in ssh-agent. "
-            + "Agent socket path, default $SSH_AUTH_SOCK. Requires -Dkey-shares.properties")
+    // A flag without a value: an optional value would take a following file name as the socket path
+    @CommandLine.Option(names = {"-ssh", "--ssh-agent"},
+        description = "decrypt SSH public key recipient with the matching key in ssh-agent at $SSH_AUTH_SOCK. "
+            + "Requires -Dkey-shares.properties")
+    private boolean sshAgent;
+
+    @CommandLine.Option(names = {"--ssh-agent-socket"}, paramLabel = "SOCKET",
+        description = "as --ssh-agent, with the ssh-agent at the given socket path instead of $SSH_AUTH_SOCK")
     private String sshAgentSocket;
 
     public File getPrivKeyFile() {
@@ -79,14 +83,17 @@ public class DecryptionKeyExclusiveArgument {
     }
 
     public boolean isWithSshAgent() {
-        return this.sshAgentSocket != null;
+        return this.sshAgent || this.sshAgentSocket != null;
     }
 
     /**
-     * @return ssh-agent socket path, empty string for $SSH_AUTH_SOCK, {@code null} if option was not given
+     * @return ssh-agent socket path, empty string for $SSH_AUTH_SOCK, {@code null} if no ssh-agent option was given
      */
     public String getSshAgentSocket() {
-        return this.sshAgentSocket;
+        if (this.sshAgentSocket != null) {
+            return this.sshAgentSocket;
+        }
+        return this.sshAgent ? "" : null;
     }
 
     public String getMid() {

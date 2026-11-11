@@ -130,6 +130,18 @@ class SshAgentClientTest {
     }
 
     @Test
+    void emptyMpintInSignatureShouldBeMalformedSignature() {
+        byte[] one = {1};
+        for (byte[] blob : List.of(
+            concat(sshString(new byte[0]), sshString(one)),     // empty r
+            concat(sshString(one), sshString(new byte[0])))) {  // empty s
+            var ex = assertThrows(com.nimbusds.jose.JOSEException.class,
+                () -> SshAgentJWSSigner.toJwsSignature(blob));
+            assertEquals("Malformed ssh-agent ECDSA signature", ex.getMessage());
+        }
+    }
+
+    @Test
     void shouldFailWithoutAuthSock() {
         var ex = assertThrows(SshAgentException.class, () -> SshAgentClient.fromEnvironment(Map.of()));
         assertEquals(Reason.NO_AUTH_SOCK, ex.getReason());
