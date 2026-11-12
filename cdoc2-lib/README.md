@@ -588,7 +588,63 @@ SSH recipients can be listed with `Envelope.parseHeader()`: they are `KeySharesR
 `KeyShareRecipientType.RUHNU`, whose `getRecipientId()` starts with `ruhnu/pk/`.
 
 Agent problems are reported as `SshAgentException` with a `getReason()`: `NO_AUTH_SOCK`, `CONNECTION_FAILED`,
-`KEY_NOT_FOUND` or `AGENT_REFUSED` (for example, the user declined an `ssh-add -c` confirmation).
+`KEY_NOT_FOUND` or `AGENT_REFUSED` (for example, the user declined an `ssh-add -c` confirmation). A shares server
+that no longer has the share (it has expired or was deleted) is reported as `KeyShareAccessException`.
+
+
+## DID recipients (ssh-agent)
+
+A CDOC2 document can be encrypted to the SSH keys a `did:web` DID document lists for `authentication`
+(ECDSA P-256 `publicKeyJwk` keys whose `controller` is the DID). Each key becomes a recipient
+`ruhnu/did/<did>/hash/<fingerprint>` (`DidRecipientId`): the fingerprint pins the key in the container, and the
+shares servers release a share only while the DID document still lists the key. The scheme is described in
+[CDOC2 with symmetric key from/to N-of-N shares (DID, ssh-agent)](../README.md#cdoc2-with-symmetric-key-fromto-n-of-n-shares-did-ssh-agent).
+
+### Encrypting to a DID
+
+Resolve the DID before building the container, so that nothing is uploaded if it can't be used:
+
+```java
+DidWebResolver resolver = DidWebResolver.createDefault(
+        DidWebResolver.DEFAULT_CONNECT_TIMEOUT, DidWebResolver.DEFAULT_DEADLINE, DidHostPolicy.ALLOW_ALL);
+DidRecipients.Resolved resolved = DidRecipients.resolve(
+        "did:web:example.org:p:alice",
+        Duration.ofDays(30), // requested share lifetime, null for shares server default
+        resolver);
+// show resolved.keyMaterials() fingerprints (SshDidEncryptionKeyMaterial.openSshFingerprint()) and
+// resolved.skipped() to the user: the DID host is trusted at this moment
+
+new CDocBuilder()
+        .withPayloadFiles(List.of(payloadFile))
+        .withRecipients(new ArrayList<>(resolved.keyMaterials()))
+        .withServices(services)
+        .buildToFile(cdoc2FileToCreate);
+```
+
+`DidRecipients.resolve` throws `DidRecipientException` with a `getReason()`: `INVALID_DID` (not did:web, not a
+valid did:web DID, too long), `NOT_FOUND`, `UNAVAILABLE` or `NO_SUPPORTED_KEY`.
+
+### Decrypting a DID recipient with ssh-agent
+
+The recipient identifier holds only the key's fingerprint, so the key material needs the agent key's public
+key blob too. The client does not resolve the DID; each shares server does.
+
+```java
+String recipientId = "ruhnu/did/did:web:example.org:p:alice/hash/ILaep1_NfsYICEypSkuVoSj0tD6P-nvxnABaRhsg-uc";
+byte[] keyBlob = Base64.getDecoder().decode(publicKeyLine.split(" ")[1]); // key in the agent
+
+List<String> extractedFiles = new CDocDecrypter()
+        .withCDoc(cdoc2FileToDecrypt.toFile())
+        .withServices(services)
+        .withRecipient(DecryptionKeyMaterial.fromSshAgentDidKey(recipientId, keyBlob))
+        .withDestinationDirectory(destDir.toFile())
+        .decrypt();
+```
+
+The auth token carries the public key in its JWS `jwk` header. A shares server's refusal is reported as
+`KeyShareAccessException`: `isRetryable()` is true when the server could not reach the DID host (HTTP 503), and
+false when the share was not found, has expired, or the DID document no longer lists the key (HTTP 404).
+Agent problems are reported as `SshAgentException`, as for SSH public key recipients.
 
 
 ## Long-term crypto

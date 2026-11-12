@@ -8,6 +8,7 @@ import ee.cyber.cdoc2.crypto.keymaterial.decrypt.KeyPairDecryptionKeyMaterial;
 import ee.cyber.cdoc2.crypto.keymaterial.decrypt.KeyShareDecryptionKeyMaterial;
 import ee.cyber.cdoc2.crypto.keymaterial.decrypt.PasswordDecryptionKeyMaterial;
 import ee.cyber.cdoc2.crypto.keymaterial.decrypt.SecretDecryptionKeyMaterial;
+import ee.cyber.cdoc2.crypto.keymaterial.decrypt.SshDidDecryptionKeyMaterial;
 import ee.cyber.cdoc2.crypto.keymaterial.decrypt.SshPkDecryptionKeyMaterial;
 import ee.cyber.cdoc2.crypto.AuthenticationIdentifier;
 
@@ -71,6 +72,17 @@ public interface DecryptionKeyMaterial {
      */
     static DecryptionKeyMaterial fromSshAgentKey(String recipientId) {
         return new SshPkDecryptionKeyMaterial(recipientId);
+    }
+
+    /**
+     * Create key material for decrypting a DID recipient with the matching key in ssh-agent.
+     * @param recipientId "ruhnu/did/&lt;did&gt;/hash/&lt;fingerprint&gt;" recipient identifier
+     * @param keyBlob     OpenSSH public key wire blob of the agent key whose fingerprint the identifier pins
+     * @return DecryptionKeyMaterial key material required for decryption
+     * @throws IllegalArgumentException if the identifier is malformed or the key does not match it
+     */
+    static DecryptionKeyMaterial fromSshAgentDidKey(String recipientId, byte[] keyBlob) {
+        return new SshDidDecryptionKeyMaterial(recipientId, keyBlob, null);
     }
 
     static DecryptionKeyMaterial fromAuthMeans(

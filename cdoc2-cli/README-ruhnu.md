@@ -1,6 +1,6 @@
 # cdoc2-cli: Ruhnu additions
 
-This fork of cdoc2-java-ref-impl adds SSH public key recipients to cdoc2-cli, and publishes the CLI as the
+This fork of cdoc2-java-ref-impl adds SSH public key and DID recipients to cdoc2-cli, and publishes the CLI as the
 container image `ghcr.io/ruhnu/ruhnu-cli`. Everything else is in [README.md](README.md).
 
 ## Encryption and decryption with SSH key (ssh-agent)
@@ -84,11 +84,81 @@ Errors are reported without a stack trace, with exit code 1:
 | `No matching key found in ssh-agent`        | the agent doesn't hold any of the container's SSH keys (fingerprints listed); nothing is sent to the shares servers |
 | `ssh-agent refused to sign`                 | the agent declined, for example the `ssh-add -c` confirmation was refused   |
 | `Invalid SSH public key: ... not supported` | `create` with a key type other than `ecdsa-sha2-nistp256`                   |
+| `... refused share ID ...: the share was not found, has expired or was deleted` | `decrypt`: a shares server no longer has the share (404) |
 
 Security notes:
 * Anyone who can use your agent can decrypt: a forwarded agent (`ssh -A`) can be used by root on the remote
   host. Prefer decrypting locally, and add the key with `ssh-add -c` (confirm every use) or use a FIDO key.
 * To revoke access before the shares expire, the shares must be deleted on at least one shares server.
+
+## Encryption and decryption with a DID (ssh-agent)
+
+A container can also be encrypted to a `did:web` DID, such as `did:web:example.org:p:alice`. `create` fetches
+the DID document (`https://example.org/p/alice/did.json`) and pins every ECDSA P-256 key it lists under
+`authentication`: one recipient per key, `ruhnu/did/<did>/hash/<fingerprint>`, where the fingerprint is the
+key's `ssh-keygen -l` SHA256 fingerprint. Decryption works as for SSH public keys, through `ssh-agent`, but every
+shares server also fetches the DID document and releases its share only while the document still lists the key.
+Removing the key from the DID document revokes access at once. Because the container pins the key's fingerprint,
+a compromised DID host can block access but can't add a key that opens existing containers. The DID host is
+trusted at the moment of encryption, so check the pinned fingerprints that `create` prints.
+
+Requirements, in addition to those for SSH public keys:
+* every configured shares server allows the DID host (`cdoc2.ruhnu.did.allowed-hosts`, see the
+  cdoc2-shares-server admin guide) and can reach it over HTTPS
+* the DID host's TLS certificate is trusted by the JVM (for a private CA, `-Djavax.net.ssl.trustStore=...`)
+* the shares servers keep DID recipient shares for their global lifetime: 3 years by default, at most 5 years
+  (`--share-expiry` requests another lifetime, up to that maximum)
+
+A DID document listing the key, in `publicKeyJwk` form (`kty` `EC`, `crv` `P-256`):
+
+```json
+{
+  "@context": ["https://www.w3.org/ns/did/v1"],
+  "id": "did:web:example.org:p:alice",
+  "verificationMethod": [{
+    "id": "did:web:example.org:p:alice#key-1",
+    "type": "JsonWebKey2020",
+    "controller": "did:web:example.org:p:alice",
+    "publicKeyJwk": {"kty": "EC", "crv": "P-256", "x": "...", "y": "..."}
+  }],
+  "authentication": ["#key-1"]
+}
+```
+
+Encrypt to a DID (`-did`, `--did`, can be repeated, and combined with other recipients):
+
+```
+java -jar target/cdoc2-cli-*.jar create \
+  -Dkey-shares.properties=config/localhost/key-shares.properties \
+  --did did:web:example.org:p:alice \
+  -f /tmp/did.cdoc2 README.md
+Pinned ruhnu/did/did:web:example.org:p:alice/hash/ILaep1_NfsYICEypSkuVoSj0tD6P-nvxnABaRhsg-uc (SHA256:ILaep1/NfsYICEypSkuVoSj0tD6P+nvxnABaRhsg+uc)
+```
+
+Keys the document lists in another form or of another type (for example Ed25519) are skipped with a
+`WARNING`. `--share-expiry` works as for SSH public keys.
+
+`info` shows the DID and the pinned key's fingerprint:
+
+```
+java -jar target/cdoc2-cli-*.jar info -f /tmp/did.cdoc2
+SSH key via DID: SN:ruhnu/did:did:web:example.org:p:alice#SHA256:ILaep1/..., TYPE:auth, V:1 (recipient: ruhnu/did/did:web:example.org:p:alice/hash/ILaep1_..., DID did:web:example.org:p:alice, key SHA256:ILaep1/...)
+```
+
+Decrypt with `--ssh-agent`, exactly as for SSH public keys. The CLI matches the agent's keys against the
+container's SSH and DID recipients by fingerprint; it doesn't fetch the DID document itself.
+
+Errors, in addition to those for SSH public keys:
+
+| Message                                                               | Cause                                                                     |
+|-----------------------------------------------------------------------|---------------------------------------------------------------------------|
+| `Only did:web DIDs are supported`, `... is not a valid did:web DID`, `DID is too long` | `create` with a DID that can't be used; nothing is uploaded |
+| `The DID document of ... was not found`                               | `create`: the DID host answered, but not with this DID's document         |
+| `The DID host of ... could not be reached`                            | `create`: connection failure, timeout, TLS failure or HTTP 5xx/429        |
+| `... lists no supported key`                                          | `create`: no ECDSA P-256 `publicKeyJwk` key under `authentication`        |
+| `refused to save key share: HTTP 400; possible cause, for a --did recipient: ...` | `create`: a shares server refused the share, for example because it doesn't allow the DID host |
+| `... the key is no longer listed in the DID document of ...`          | `decrypt`: a shares server refused the share (404), usually because the key was removed from the DID document (revoked) |
+| `... could not reach the DID host of ...; try again later`            | `decrypt`: a shares server couldn't fetch the DID document (503)          |
 
 ## Docker image (SSH key recipients)
 

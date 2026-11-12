@@ -23,7 +23,7 @@ import ee.cyber.cdoc2.crypto.RsaUtils;
 import ee.cyber.cdoc2.crypto.KeyAlgorithm;
 import ee.cyber.cdoc2.crypto.keymaterial.encrypt.PublicKeyEncryptionKeyMaterial;
 import ee.cyber.cdoc2.crypto.keymaterial.encrypt.SecretEncryptionKeyMaterial;
-import ee.cyber.cdoc2.crypto.keymaterial.encrypt.SshPkEncryptionKeyMaterial;
+import ee.cyber.cdoc2.crypto.keymaterial.encrypt.RuhnuEncryptionKeyMaterial;
 import ee.cyber.cdoc2.fbs.header.FMKEncryptionMethod;
 import ee.cyber.cdoc2.fbs.recipients.KeyShareRecipientType;
 import ee.cyber.cdoc2.fbs.recipients.KeySharesCapsule;
@@ -128,11 +128,11 @@ public final class RecipientFactory {
                 fileMasterKey,
                 keyShareKeyMaterial
             ));
-        } else if (encKeyMaterial instanceof SshPkEncryptionKeyMaterial sshKeyMaterial) {
+        } else if (encKeyMaterial instanceof RuhnuEncryptionKeyMaterial ruhnuKeyMaterial) {
             recipients.add(buildKeySharesRecipient(
                 keySharesClientFactory,
                 fileMasterKey,
-                sshKeyMaterial
+                ruhnuKeyMaterial
             ));
         } else {
             addSymmetricKeyRecipient(
@@ -452,12 +452,12 @@ public final class RecipientFactory {
     }
 
     /**
-     * Build key shares recipient for SSH public key ("ruhnu/pk/") recipient
+     * Build key shares recipient for SSH public key ("ruhnu/pk/") and DID ("ruhnu/did/") recipients
      */
     private static KeySharesRecipient buildKeySharesRecipient(
         @Nullable KeySharesClientFactory keySharesClientFactory,
         byte[] fileMasterKey,
-        SshPkEncryptionKeyMaterial sshKeyMaterial
+        RuhnuEncryptionKeyMaterial sshKeyMaterial
     ) throws GeneralSecurityException, ExtApiException {
         OffsetDateTime expiryTime = (sshKeyMaterial.shareLifetime() == null)
             ? null

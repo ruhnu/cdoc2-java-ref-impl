@@ -67,7 +67,8 @@ public final class KeySharesClientImpl implements KeySharesClient {
         try {
             return apiClient.createKeyShare(keyShare, expiryTime);
         } catch (ApiException e) {
-            throw new ExtApiException("Failed to save key share. Error code: " + e.getCode(), e);
+            throw new ExtApiException(
+                "Shares server " + serverUrl + " refused to save key share: HTTP " + e.getCode(), e);
         } catch (Exception e) {
             log.error("Failed to connect to key share server {}", serverUrl, e);
             if (e.getCause() instanceof IOException) {

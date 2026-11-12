@@ -1,6 +1,8 @@
 package ee.cyber.cdoc2.cli.commands;
 
+import ee.cyber.cdoc2.auth.DidRecipientId;
 import ee.cyber.cdoc2.auth.SshPublicKeyParser;
+import ee.cyber.cdoc2.auth.exception.InvalidDidRecipientException;
 import ee.cyber.cdoc2.container.Envelope;
 import ee.cyber.cdoc2.container.recipients.KeySharesRecipient;
 import ee.cyber.cdoc2.container.recipients.PBKDF2Recipient;
@@ -58,6 +60,8 @@ public class CDocInfoCmd implements Callable<Void> {
                 : "";
             if (isSshRecipient(recipient)) {
                 server = "(recipient: " + recipient.getRecipientId() + ")";
+            } else if (isDidRecipient(recipient)) {
+                server = "(recipient: " + recipient.getRecipientId() + didAndFingerprint(recipient) + ")";
             }
 
             System.out.println(
@@ -79,6 +83,8 @@ public class CDocInfoCmd implements Callable<Void> {
             return "Password";
         } else if (isSshRecipient(recipient)) {
             return "SSH public key";
+        } else if (isDidRecipient(recipient)) {
+            return "SSH key via DID";
         } else if (recipient instanceof KeySharesRecipient) {
             return "Smart-ID/Mobile-ID";
         } else {
@@ -92,6 +98,22 @@ public class CDocInfoCmd implements Callable<Void> {
         return recipient instanceof KeySharesRecipient ksr
             && ksr.getRecipientType() == KeyShareRecipientType.RUHNU
             && ksr.getRecipientId().toString().startsWith(SshPublicKeyParser.RECIPIENT_ID_PREFIX);
+    }
+
+    private static boolean isDidRecipient(Recipient recipient) {
+        return recipient instanceof KeySharesRecipient ksr
+            && ksr.getRecipientType() == KeyShareRecipientType.RUHNU
+            && DidRecipientId.isDidRecipientId(ksr.getRecipientId().toString());
+    }
+
+    /** ", DID ..., key SHA256:..." for a valid DID recipient identifier, empty otherwise */
+    private static String didAndFingerprint(Recipient recipient) {
+        try {
+            DidRecipientId id = DidRecipientId.parse(recipient.getRecipientId().toString());
+            return ", DID " + id.did() + ", key " + id.openSshFingerprint();
+        } catch (InvalidDidRecipientException e) {
+            return ", invalid identifier";
+        }
     }
     
 }

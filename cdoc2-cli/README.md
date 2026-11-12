@@ -173,7 +173,7 @@ for decryption):
 
 ### Encryption and decryption with SSH key (ssh-agent)
 
-SSH public key recipients and the `ghcr.io/ruhnu/ruhnu-cli` Docker image are described in
+SSH public key and DID recipients, and the `ghcr.io/ruhnu/ruhnu-cli` Docker image, are described in
 [README-ruhnu.md](README-ruhnu.md).
 
 

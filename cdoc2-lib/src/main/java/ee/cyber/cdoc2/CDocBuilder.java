@@ -17,7 +17,7 @@ import ee.cyber.cdoc2.crypto.EncryptionKeyOrigin;
 import ee.cyber.cdoc2.crypto.KeyAlgorithm;
 import ee.cyber.cdoc2.crypto.keymaterial.EncryptionKeyMaterial;
 import ee.cyber.cdoc2.crypto.keymaterial.encrypt.KeyShareEncryptionKeyMaterial;
-import ee.cyber.cdoc2.crypto.keymaterial.encrypt.SshPkEncryptionKeyMaterial;
+import ee.cyber.cdoc2.crypto.keymaterial.encrypt.RuhnuEncryptionKeyMaterial;
 import ee.cyber.cdoc2.exceptions.CDocException;
 import ee.cyber.cdoc2.exceptions.CDocValidationException;
 import ee.cyber.cdoc2.exceptions.ConfigurationLoadingException;
@@ -245,8 +245,9 @@ public class CDocBuilder {
             }
         } else if (keyMaterial instanceof KeyShareEncryptionKeyMaterial keyShareKeyMaterial) {
             assertKeyLabelIsFormatted(keyShareKeyMaterial.keyLabel());
-        } else if (keyMaterial instanceof SshPkEncryptionKeyMaterial sshKeyMaterial) {
-            assertKeyLabelIsFormatted(sshKeyMaterial.keyLabel());
+        } else if (keyMaterial instanceof RuhnuEncryptionKeyMaterial ruhnuKeyMaterial) {
+            // "ruhnu/pk/" SSH public key and "ruhnu/did/" DID recipients
+            assertKeyLabelIsFormatted(ruhnuKeyMaterial.keyLabel());
         } else {
             String errorMsg = "Unsupported key " + keyMaterial.getLabel();
             log.error(errorMsg);

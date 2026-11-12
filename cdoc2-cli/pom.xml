@@ -121,6 +121,19 @@
                 </executions>
             </plugin>
 
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables>
+                        <!-- DID resolution (create with a DID recipient) uses the JVM default trust store; in tests it must
+                             trust the WireMock DID host certificate -->
+                        <javax.net.ssl.trustStore>${project.basedir}/../cdoc2-lib/src/test/resources/clienttruststore.jks</javax.net.ssl.trustStore>
+                        <javax.net.ssl.trustStorePassword>passwd</javax.net.ssl.trustStorePassword>
+                        <javax.net.ssl.trustStoreType>JKS</javax.net.ssl.trustStoreType>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
 
